@@ -1097,16 +1097,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f4beca3cb2444e3304ac30843cc091f44ed58932353cd492ce740067bfce6b12"
 
 [[package]]
-name = "megaman"
-version = "0.1.0"
-dependencies = [
- "browser-ui",
- "mui",
- "mui-winit",
- "png",
-]
-
-[[package]]
 name = "find-msvc-tools"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1734,6 +1724,16 @@ dependencies = [
  "windows",
  "windows-core",
  "x11rb",
+]
+
+[[package]]
+name = "megaman"
+version = "0.1.0"
+dependencies = [
+ "browser-ui",
+ "mui",
+ "mui-winit",
+ "png",
 ]
 
 [[package]]

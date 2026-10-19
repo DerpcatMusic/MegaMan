@@ -8,4 +8,6 @@ Do not override the configured Cargo target directory. Parallel worktrees sharin
 
 Tests create generated fixtures beneath each crate's ignored test directories. Unprivileged source permission limits, Linux filesystem/kernel capabilities and cooperative cancellation under blocked OS calls remain explicit. New desktop backends need their own native tests.
 
+Archive interoperability has a separate opt-in test target requiring `7z` on PATH: `cargo test --locked -p browser-archive --test zip_interop -- --ignored`. The ordinary test run marks these external-tool cases ignored; it never silently counts a missing tool as a passing compatibility check. See the [ZIP service notes](../crates/browser-archive/README.md) for fixture scope.
+
 Pull requests should explain behavior, local checks and known limits. Performance reports need exact source/build/fixture identity, correctness oracles, sample counts and measurement boundaries. A valid output is required before a speed sample counts.
