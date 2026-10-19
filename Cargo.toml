@@ -16,8 +16,8 @@ browser-archive = { path = "crates/browser-archive" }
 browser-operations = { path = "crates/browser-operations" }
 browser-transfer = { path = "crates/browser-transfer" }
 browser-native = { path = "crates/browser-native" }
-mui = { git = "https://github.com/Matari-Audio/MUI", rev = "f97d15be61a9f6643de8897b2c3385f39400fd3a", features = ["cpu"] }
-mui-winit = { git = "https://github.com/Matari-Audio/MUI", rev = "f97d15be61a9f6643de8897b2c3385f39400fd3a" }
+mui = { git = "https://github.com/Matari-Audio/MUI", rev = "f08ac4737c5a24f9c73ecda4cb68d2aeb7fb1a0a", features = ["cpu"] }
+mui-winit = { git = "https://github.com/Matari-Audio/MUI", rev = "f08ac4737c5a24f9c73ecda4cb68d2aeb7fb1a0a" }
 epaint_default_fonts = "0.36"
 png = "0.18"
 

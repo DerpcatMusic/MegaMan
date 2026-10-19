@@ -452,7 +452,7 @@ mod tests {
     #[test]
     fn cancel_realized_in_the_frame_of_a_ready_offer_prevents_copy_admission() {
         let mut view = BrowserView::fixture(0);
-        view.file_clipboard = Some(ClipboardUi {
+        view.jobs.file_clipboard = Some(ClipboardUi {
             service: None,
             startup: Startup::Ready { window: 1 },
             ownership: Ownership::default(),
@@ -465,7 +465,12 @@ mod tests {
         });
         let mut ui = make_ui().unwrap();
         let size = Size::new(640., 480.);
-        let id = view.file_clipboard.as_ref().unwrap().action_id("cancel");
+        let id = view
+            .jobs
+            .file_clipboard
+            .as_ref()
+            .unwrap()
+            .action_id("cancel");
         // Paint the prior reading scene's real control without a native worker.
         // The independent X11 review harness covers the actual pending Read.
         let reading_tree = |ui: &Ui| {
@@ -505,13 +510,13 @@ mod tests {
             view.after_frame(&mut ui);
         }
         // A Read becomes ready before this release frame is resolved.
-        view.file_clipboard.as_mut().unwrap().paste_offer = Some(PasteOffer {
+        view.jobs.file_clipboard.as_mut().unwrap().paste_offer = Some(PasteOffer {
             paths: vec!["/megaman-cancel-fixture/source".into()],
             destination: "/megaman-cancel-fixture/destination".into(),
         });
         // Admission is forbidden during build, even though the offer is ready.
         let _ = view.build(&mut ui, &Input::default());
-        assert!(view.copy_transfers.is_none());
+        assert!(view.jobs.copy_transfers.is_none());
         let tree = reading_tree(&ui);
         ui.frame(
             tree,
@@ -526,10 +531,10 @@ mod tests {
         assert!(ui.get(&id).clicked);
         view.after_frame(&mut ui);
         assert!(
-            view.copy_transfers.is_none(),
+            view.jobs.copy_transfers.is_none(),
             "Cancel must precede copy admission"
         );
-        let clipboard = view.file_clipboard.as_ref().unwrap();
+        let clipboard = view.jobs.file_clipboard.as_ref().unwrap();
         assert!(!clipboard.paste_pending());
         assert!(clipboard.message().unwrap().contains("before any copy job"));
     }
@@ -554,18 +559,28 @@ mod tests {
                 ui_epoch: 0,
                 paste_offer: None,
             };
-            clipboard.copy(None, &view.selection);
+            clipboard.copy(None, &view.tab().selection);
             assert!(clipboard.failed());
-            view.file_clipboard = Some(clipboard);
+            view.jobs.file_clipboard = Some(clipboard);
             let mut ui = make_ui().unwrap();
             for _ in 0..6 {
                 step(&mut view, &mut ui, size, Input::default());
             }
             let scene = ui.scene().unwrap();
             let root = scene.surface("browser-root").unwrap().frame;
-            let copy_id = view.copy_files_id();
-            let dismiss_id = view.file_clipboard.as_ref().unwrap().action_id("dismiss");
-            let cancel_id = view.file_clipboard.as_ref().unwrap().action_id("cancel");
+            let copy_id = view.tab().copy_files_id();
+            let dismiss_id = view
+                .jobs
+                .file_clipboard
+                .as_ref()
+                .unwrap()
+                .action_id("dismiss");
+            let cancel_id = view
+                .jobs
+                .file_clipboard
+                .as_ref()
+                .unwrap()
+                .action_id("cancel");
             for id in [
                 copy_id.as_str(),
                 "file-clipboard-status",
@@ -602,7 +617,14 @@ mod tests {
             for _ in 0..4 {
                 step(&mut view, &mut ui, size, Input::default());
             }
-            assert!(view.file_clipboard.as_ref().unwrap().message().is_none());
+            assert!(
+                view.jobs
+                    .file_clipboard
+                    .as_ref()
+                    .unwrap()
+                    .message()
+                    .is_none()
+            );
             assert!(
                 ui.scene()
                     .unwrap()
@@ -610,7 +632,7 @@ mod tests {
                     .is_none()
             );
             assert_eq!(
-                view.selection.count(),
+                view.tab().selection.count(),
                 1,
                 "dismissal must not change file selection"
             );

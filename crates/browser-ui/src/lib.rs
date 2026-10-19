@@ -11,6 +11,11 @@ use std::io::Read;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::OnceLock;
 
+mod jobs;
+use jobs::AppJobs;
+mod tabs;
+pub use tabs::BrowserView;
+
 mod find;
 use find::{FindAction, FindPanel};
 mod extraction;
@@ -361,7 +366,7 @@ pub fn make_ui() -> Result<Ui, String> {
     Ok(ui)
 }
 
-pub struct BrowserView {
+struct TabView {
     browser: Option<Browser>,
     fixture_count: Option<usize>,
     list: ListState,
@@ -386,16 +391,10 @@ pub struct BrowserView {
     resize_reveal: Option<usize>,
     find: Option<FindPanel>,
     archive: Option<ArchivePanel>,
-    #[cfg(target_os = "linux")]
-    file_clipboard: Option<clipboard::ClipboardUi>,
-    extraction: Option<ExtractionUi>,
-    #[cfg(target_os = "linux")]
-    copy_transfers: Option<transfers::TransfersUi>,
-    copy_return_pending: bool,
     reveal_path: Option<PathBuf>,
 }
 
-impl BrowserView {
+impl TabView {
     pub fn new(path: PathBuf) -> Self {
         let path_text = path.to_string_lossy().into_owned();
         Self {
@@ -450,21 +449,7 @@ impl BrowserView {
             resize_reveal: None,
             find: None,
             archive: None,
-            #[cfg(target_os = "linux")]
-            file_clipboard: None,
-            extraction: None,
-            #[cfg(target_os = "linux")]
-            copy_transfers: None,
-            copy_return_pending: false,
             reveal_path: None,
-        }
-    }
-    /// Starts an optional native clipboard worker; no native connection or IO occurs here.
-    /// Desktop hosts call this explicitly. Offscreen scenes and fixtures do not.
-    #[cfg(target_os = "linux")]
-    pub fn enable_native_file_clipboard(&mut self) {
-        if self.browser.is_some() && self.file_clipboard.is_none() {
-            self.file_clipboard = Some(clipboard::ClipboardUi::new());
         }
     }
     #[cfg(target_os = "linux")]
@@ -472,49 +457,20 @@ impl BrowserView {
         format!("copy-files/{}", self.listing_serial)
     }
     #[cfg(target_os = "linux")]
-    fn copy_selected_files(&mut self) {
+    fn copy_selected_files(&mut self, jobs: &mut AppJobs) {
         let snapshot = self.browser.as_ref().and_then(Browser::snapshot);
-        if let Some(clipboard) = &mut self.file_clipboard {
+        if let Some(clipboard) = &mut jobs.file_clipboard {
             clipboard.copy(snapshot, &self.selection);
         }
-    }
-    fn poll_file_clipboard(&mut self) -> bool {
-        #[cfg(target_os = "linux")]
-        if let Some(clipboard) = &mut self.file_clipboard {
-            return clipboard.poll();
-        }
-        false
-    }
-    fn clipboard_evidence(&self) -> String {
-        #[cfg(target_os = "linux")]
-        if let Some(clipboard) = &self.file_clipboard {
-            return clipboard.evidence();
-        }
-        "null".into()
-    }
-    pub fn mutations_busy(&self) -> bool {
-        let extraction_busy = self.extraction.as_ref().is_some_and(ExtractionUi::busy);
-        #[cfg(target_os = "linux")]
-        return extraction_busy
-            || self
-                .copy_transfers
-                .as_ref()
-                .is_some_and(transfers::TransfersUi::busy)
-            || self
-                .file_clipboard
-                .as_ref()
-                .is_some_and(clipboard::ClipboardUi::paste_pending);
-        #[cfg(not(target_os = "linux"))]
-        extraction_busy
     }
     #[cfg(target_os = "linux")]
     fn paste_files_id(&self) -> String {
         format!("paste-files/{}", self.listing_serial)
     }
     #[cfg(target_os = "linux")]
-    fn paste_files(&mut self) {
-        if self.mutations_busy() {
-            if let Some(transfers) = self.copy_transfers.as_mut().filter(|t| t.busy()) {
+    fn paste_files(&mut self, jobs: &mut AppJobs) {
+        if jobs.mutations_busy() {
+            if let Some(transfers) = jobs.copy_transfers.as_mut().filter(|t| t.busy()) {
                 transfers.show();
             }
             return;
@@ -526,179 +482,9 @@ impl BrowserView {
         else {
             return;
         };
-        if let Some(clipboard) = &mut self.file_clipboard {
+        if let Some(clipboard) = &mut jobs.file_clipboard {
             clipboard.read_for_paste(browser.path().to_path_buf());
         }
-    }
-    // Admission runs only after this frame's controls have been resolved. A completed
-    // native Read must not overtake a Cancel click in the frame being processed.
-    fn admit_paste_offer(&mut self) {
-        #[cfg(target_os = "linux")]
-        if let Some(offer) = self
-            .file_clipboard
-            .as_mut()
-            .and_then(clipboard::ClipboardUi::take_paste_offer)
-        {
-            let accepted = if self.mutations_busy() {
-                false
-            } else {
-                self.copy_transfers
-                    .get_or_insert_with(transfers::TransfersUi::new)
-                    .start(offer.paths, offer.destination)
-            };
-            if let Some(clipboard) = &mut self.file_clipboard {
-                clipboard.paste_submitted(accepted);
-            }
-            self.geometry_changed = true;
-        }
-    }
-    fn dispatch_clipboard_controls(&mut self, ui: &Ui) {
-        #[cfg(target_os = "linux")]
-        if let Some(clipboard) = &mut self.file_clipboard {
-            if clicked(ui, &clipboard.action_id("cancel")) {
-                clipboard.cancel();
-            }
-            if clicked(ui, &clipboard.action_id("dismiss")) {
-                clipboard.dismiss();
-            }
-        }
-        #[cfg(not(target_os = "linux"))]
-        let _ = ui;
-    }
-    fn poll_copy_transfers(&mut self) -> bool {
-        #[cfg(target_os = "linux")]
-        {
-            let mut changed = false;
-            let refresh = if let Some(transfers) = &mut self.copy_transfers {
-                changed |= transfers.poll();
-                transfers.take_refresh_destination()
-            } else {
-                None
-            };
-            if let Some(destination) = refresh
-                && let Some(browser) = &mut self.browser
-                && browser.path() == destination
-            {
-                browser.navigate(destination);
-                self.reset_listing();
-                changed = true;
-            }
-            changed
-        }
-        #[cfg(not(target_os = "linux"))]
-        false
-    }
-    fn build_copy_transfers(&mut self, ui: &mut Ui) -> Option<El> {
-        #[cfg(target_os = "linux")]
-        if let Some(transfers) = self.copy_transfers.as_mut().filter(|t| t.visible()) {
-            let (tree, _) = transfers.build(ui);
-            if !transfers.visible() {
-                self.copy_return_pending = true;
-                self.discard_listing_input = true;
-                self.geometry_changed = true;
-            }
-            return Some(tree);
-        }
-        #[cfg(not(target_os = "linux"))]
-        let _ = ui;
-        None
-    }
-    fn with_copy_transfer_status(&mut self, ui: &Ui, tree: El) -> El {
-        #[cfg(target_os = "linux")]
-        if let Some(transfers) = self
-            .copy_transfers
-            .as_mut()
-            .filter(|t| t.busy() && !t.visible())
-        {
-            let id = transfers.action_id("show");
-            if clicked(ui, &id) {
-                transfers.show();
-                self.geometry_changed = true;
-            }
-            let summary = transfers.summary();
-            return col([
-                tree.grow(1).basis(0).min_h(0),
-                hairline(),
-                row([
-                    detail(summary.clone())
-                        .grow(1)
-                        .basis(0)
-                        .min_w(0)
-                        .lines(1)
-                        .clip()
-                        .tip(summary),
-                    action(
-                        ui,
-                        &id,
-                        "Show copy progress and results",
-                        label("Transfers"),
-                        true,
-                        false,
-                    ),
-                ])
-                .gap(7)
-                .pad((8, 3))
-                .align(Align::Center)
-                .fill(chrome())
-                .shrink(0),
-            ])
-            .w(pct(100))
-            .h(pct(100))
-            .min_w(0)
-            .min_h(0);
-        }
-        #[cfg(not(target_os = "linux"))]
-        let _ = ui;
-        tree
-    }
-    fn clipboard_status(&mut self, ui: &Ui) -> Option<El> {
-        #[cfg(target_os = "linux")]
-        if let Some(clipboard) = &mut self.file_clipboard {
-            let cancel_id = clipboard.action_id("cancel");
-            let dismiss_id = clipboard.action_id("dismiss");
-            let message = clipboard.message()?.to_owned();
-            return Some(
-                row([
-                    detail(message.clone())
-                        .grow(1)
-                        .basis(0)
-                        .min_w(0)
-                        .lines(1)
-                        .clip()
-                        .tip(message)
-                        .when(clipboard.failed(), |el| el.fill(color(0xffb4ab))),
-                    if clipboard.pending() {
-                        action(
-                            ui,
-                            &cancel_id,
-                            "Cancel file clipboard request",
-                            label("Cancel"),
-                            true,
-                            false,
-                        )
-                    } else {
-                        action(
-                            ui,
-                            &dismiss_id,
-                            "Dismiss clipboard status",
-                            glyph(Glyph::Close, muted()),
-                            true,
-                            false,
-                        )
-                    },
-                ])
-                .gap(7)
-                .pad((8, 3))
-                .align(Align::Center)
-                .fill(chrome())
-                .shrink(0)
-                .min_w(0)
-                .id("file-clipboard-status"),
-            );
-        }
-        #[cfg(not(target_os = "linux"))]
-        let _ = ui;
-        None
     }
     fn count(&self) -> usize {
         self.fixture_count
@@ -801,7 +587,7 @@ impl BrowserView {
             _ => {}
         }
     }
-    fn shortcut(&mut self, ui: &mut Ui) {
+    fn shortcut(&mut self, ui: &mut Ui, jobs: &mut AppJobs) {
         let mut keys = ui.shortcuts().to_vec();
         if ui.focus_is_text() {
             keys.extend(
@@ -843,10 +629,10 @@ impl BrowserView {
                     self.apply_selection(SelectAction::SelectAll, false);
                 } else if control && matches!(press.key, Key::Char('c' | 'C')) {
                     #[cfg(target_os = "linux")]
-                    self.copy_selected_files();
+                    self.copy_selected_files(jobs);
                 } else if control && matches!(press.key, Key::Char('v' | 'V')) {
                     #[cfg(target_os = "linux")]
-                    self.paste_files();
+                    self.paste_files(jobs);
                 } else if control && press.key == Key::Space {
                     self.apply_selection(SelectAction::ToggleCursor, false);
                 } else if !control
@@ -924,74 +710,8 @@ impl BrowserView {
         self.window.width
             >= CONTENT_MIN + INSPECTOR_MIN + GAP + if rail { self.rail_width + GAP } else { 0. }
     }
-    fn poll_extraction(&mut self) -> bool {
-        let mut changed = false;
-        let refresh = if let Some(panel) = &mut self.extraction {
-            changed |= panel.poll();
-            panel.take_refresh_parent()
-        } else {
-            None
-        };
-        if let Some(parent) = refresh
-            && let Some(browser) = &mut self.browser
-            && browser.path() == parent
-        {
-            browser.navigate(parent);
-            self.reset_listing();
-            changed = true;
-        }
-        changed
-    }
-    fn build_extraction(&mut self, ui: &mut Ui) -> Option<El> {
-        let extraction = self.extraction.as_mut().filter(|panel| panel.visible())?;
-        let (tree, outcome) = extraction.build(ui);
-        if matches!(outcome, Some(ExtractionAction::Back)) {
-            self.geometry_changed = true;
-            self.discard_listing_input = true;
-            if let Some(archive) = &mut self.archive {
-                archive.restore_focus();
-            } else {
-                ui.focus("file-list");
-            }
-        }
-        // Keep this frame on its own tree so Back's Escape/Enter cannot also
-        // activate an archive or host action from the previous input batch.
-        Some(tree)
-    }
-    fn with_mutation_status(&mut self, ui: &Ui, tree: El) -> El {
-        // A native Read keeps its destination while browsing another view. Keep
-        // its Cancel control reachable until the worker response is consumed.
-        let tree = if (self.find.is_some() || self.archive.is_some())
-            && let Some(status) = self.clipboard_status(ui)
-        {
-            col([tree.grow(1).basis(0).min_h(0), hairline(), status])
-                .w(pct(100))
-                .h(pct(100))
-                .min_w(0)
-                .min_h(0)
-        } else {
-            tree
-        };
-        let tree = self.with_copy_transfer_status(ui, tree);
-        self.with_extraction_status(ui, tree)
-    }
-    fn with_extraction_status(&mut self, ui: &Ui, tree: El) -> El {
-        if let Some(status) = self
-            .extraction
-            .as_mut()
-            .and_then(|panel| panel.build_status(ui))
-        {
-            col([status, hairline(), tree.grow(1).basis(0).min_h(0).min_w(0)])
-                .w(pct(100))
-                .h(pct(100))
-                .min_w(0)
-                .min_h(0)
-        } else {
-            tree
-        }
-    }
-    fn build_archive(&mut self, ui: &mut Ui) -> Option<El> {
-        let busy = self.mutations_busy();
+    fn build_archive(&mut self, ui: &mut Ui, jobs: &mut AppJobs) -> Option<El> {
+        let busy = jobs.mutations_busy();
         self.archive.as_mut()?.set_mutations_busy(busy);
         let (tree, action) = self.archive.as_mut()?.build(ui);
         let focus = match action {
@@ -999,20 +719,22 @@ impl BrowserView {
             Some(ArchiveAction::Close) => "file-list",
             Some(ArchiveAction::GoTo) => "path-input",
             Some(ArchiveAction::Extract(selection)) => {
-                if !self.mutations_busy() {
+                if !jobs.mutations_busy() {
                     let destination = self
                         .browser
                         .as_ref()
                         .map(|browser| browser.path().join("Extracted ZIP"))
                         .unwrap_or_else(|| self.home.join("Extracted ZIP"));
-                    let extraction = self.extraction.get_or_insert_with(ExtractionUi::new);
+                    let extraction = jobs.extraction.get_or_insert_with(ExtractionUi::new);
                     self.archive.as_ref().unwrap().prepare_extraction(
                         extraction,
                         selection,
                         destination,
                     );
                 }
-                return self.build_extraction(ui).or(Some(tree));
+                // A newly prepared controller was not the owner of this input
+                // batch. Its future raw-input editor must receive no old input.
+                return jobs.build_extraction(ui, &Input::default()).or(Some(tree));
             }
         };
         self.archive = None;
@@ -1044,12 +766,12 @@ impl BrowserView {
             self.reset_listing();
         }
     }
-    pub fn evidence(&self) -> String {
-        if let Some(extraction) = self.extraction.as_ref().filter(|panel| panel.visible()) {
+    fn evidence(&self, jobs: &AppJobs) -> String {
+        if let Some(extraction) = jobs.extraction.as_ref().filter(|panel| panel.visible()) {
             return extraction.evidence();
         }
         #[cfg(target_os = "linux")]
-        if let Some(transfers) = self.copy_transfers.as_ref().filter(|t| t.visible()) {
+        if let Some(transfers) = jobs.copy_transfers.as_ref().filter(|t| t.visible()) {
             return transfers.evidence();
         }
         if let Some(find) = &self.find {
@@ -1093,7 +815,7 @@ impl BrowserView {
             self.show_inspector && self.inspector_fits(),
             self.evidence_focus_role,
             self.path_text.len(),
-            self.clipboard_evidence(),
+            jobs.clipboard_evidence(),
             self.visible.start,
             self.visible.end,
             OS_FALLBACKS.get().map_or(0, Vec::len),
@@ -1335,18 +1057,10 @@ fn zip_path(path: &FsPath) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
 }
 
-impl View for BrowserView {
-    fn build(&mut self, ui: &mut Ui, _: &Input) -> El {
-        self.poll_file_clipboard();
-        self.poll_extraction();
-        self.poll_copy_transfers();
-        if let Some(tree) = self.build_extraction(ui) {
-            return tree;
-        }
-        if let Some(tree) = self.build_copy_transfers(ui) {
-            return tree;
-        }
-        if std::mem::take(&mut self.copy_return_pending) {
+impl TabView {
+    fn build(&mut self, ui: &mut Ui, jobs: &mut AppJobs) -> El {
+        if std::mem::take(&mut jobs.copy_return_pending) {
+            self.discard_listing_input = true;
             ui.focus(if self.find.is_some() {
                 "find-query"
             } else if self.archive.is_some() {
@@ -1357,10 +1071,10 @@ impl View for BrowserView {
         }
         let leaving_subview = self.find.is_some() || self.archive.is_some();
         if let Some(tree) = self.build_find(ui) {
-            return self.with_mutation_status(ui, tree);
+            return jobs.with_mutation_status(ui, tree);
         }
-        if let Some(tree) = self.build_archive(ui) {
-            return self.with_mutation_status(ui, tree);
+        if let Some(tree) = self.build_archive(ui, jobs) {
+            return jobs.with_mutation_status(ui, tree);
         }
         self.refresh();
         let discard_listing_input = std::mem::take(&mut self.discard_listing_input);
@@ -1386,18 +1100,18 @@ impl View for BrowserView {
             self.list.scroll_to_item(index, ScrollTo::Nearest);
         }
         if !leaving_subview && !discard_listing_input {
-            self.shortcut(ui);
+            self.shortcut(ui, jobs);
         }
         if let Some(tree) = self.build_find(ui) {
-            return self.with_mutation_status(ui, tree);
+            return jobs.with_mutation_status(ui, tree);
         }
-        if let Some(tree) = self.build_archive(ui) {
-            return self.with_mutation_status(ui, tree);
+        if let Some(tree) = self.build_archive(ui, jobs) {
+            return jobs.with_mutation_status(ui, tree);
         }
         if clicked(ui, "find-anywhere") {
             self.open_find(ui);
             if let Some(tree) = self.build_find(ui) {
-                return self.with_mutation_status(ui, tree);
+                return jobs.with_mutation_status(ui, tree);
             }
         }
         if clicked(ui, "nav-back") {
@@ -1411,11 +1125,11 @@ impl View for BrowserView {
         }
         #[cfg(target_os = "linux")]
         if clicked(ui, &self.copy_files_id()) {
-            self.copy_selected_files();
+            self.copy_selected_files(jobs);
         }
         #[cfg(target_os = "linux")]
         if clicked(ui, &self.paste_files_id()) {
-            self.paste_files();
+            self.paste_files(jobs);
         }
         if clicked(ui, "toggle-places") {
             self.show_rail = !self.show_rail;
@@ -1523,7 +1237,7 @@ impl View for BrowserView {
         );
         let mut toolbar_items = vec![nav_back, nav_forward, nav_up, places, path];
         #[cfg(target_os = "linux")]
-        if let Some(clipboard) = &self.file_clipboard {
+        if let Some(clipboard) = &jobs.file_clipboard {
             toolbar_items.push(action(
                 ui,
                 &self.copy_files_id(),
@@ -1707,8 +1421,8 @@ impl View for BrowserView {
         }
         if let Some(index) = pending_activation {
             self.activate(index);
-            if let Some(tree) = self.build_archive(ui) {
-                return self.with_extraction_status(ui, tree);
+            if let Some(tree) = self.build_archive(ui, jobs) {
+                return jobs.with_extraction_status(ui, tree);
             }
         }
         // The collection's finite dimensions are visibility hints. Its actual box is
@@ -1852,13 +1566,10 @@ impl View for BrowserView {
             hairline(),
             status,
         ];
-        if let Some(clipboard_status) = self.clipboard_status(ui) {
-            regions.extend([hairline(), clipboard_status]);
-        }
         #[cfg(target_os = "linux")]
-        if self.file_clipboard.is_some() && real {
-            let enabled = !self.mutations_busy()
-                && self.file_clipboard.as_ref().is_some_and(|c| c.can_copy())
+        if jobs.file_clipboard.is_some() && real {
+            let enabled = !jobs.mutations_busy()
+                && jobs.file_clipboard.as_ref().is_some_and(|c| c.can_copy())
                 && self
                     .browser
                     .as_ref()
@@ -1894,44 +1605,19 @@ impl View for BrowserView {
             .fill(ground())
             .id("browser-root")
             .named("File browser");
-        self.with_mutation_status(ui, tree)
+        jobs.with_mutation_status(ui, tree)
     }
     fn changed(&mut self) -> bool {
-        let clipboard_changed = self.poll_file_clipboard();
-        let extraction_changed = self.poll_extraction();
-        let copy_changed = self.poll_copy_transfers();
-        let view_changed = std::mem::take(&mut self.geometry_changed);
+        let changed = std::mem::take(&mut self.geometry_changed);
         if let Some(find) = &mut self.find {
-            return find.poll()
-                || clipboard_changed
-                || extraction_changed
-                || copy_changed
-                || view_changed;
+            return find.poll() || changed;
         }
         if let Some(archive) = &mut self.archive {
-            return archive.poll()
-                || clipboard_changed
-                || extraction_changed
-                || copy_changed
-                || view_changed;
+            return archive.poll() || changed;
         }
-        self.refresh() || view_changed || clipboard_changed || extraction_changed || copy_changed
-    }
-    fn request_resize(&mut self, _: u32, _: u32) -> bool {
-        false
+        self.refresh() || changed
     }
     fn after_frame(&mut self, ui: &mut Ui) {
-        self.dispatch_clipboard_controls(ui);
-        self.admit_paste_offer();
-        if let Some(extraction) = self.extraction.as_mut().filter(|panel| panel.visible()) {
-            extraction.after_frame(ui);
-            return;
-        }
-        #[cfg(target_os = "linux")]
-        if let Some(transfers) = self.copy_transfers.as_mut().filter(|t| t.visible()) {
-            transfers.after_frame(ui);
-            return;
-        }
         self.evidence_focus_role = match ui.focus_key() {
             Some("path-input") => "location",
             Some("filter-input") => "filter",
@@ -1966,25 +1652,6 @@ impl View for BrowserView {
                 }
             }
         }
-    }
-    fn claims_key(&self, key: &Key, mods: Mods) -> bool {
-        matches!(
-            key,
-            Key::Up
-                | Key::Down
-                | Key::Home
-                | Key::End
-                | Key::PageUp
-                | Key::PageDown
-                | Key::Enter
-                | Key::Space
-                | Key::Escape
-        ) || ((mods.ctrl || mods.cmd)
-            && matches!(
-                key,
-                Key::Char('l' | 'f' | 'F' | 'a' | 'A' | 'c' | 'C' | 'v' | 'V')
-            ))
-            || (mods.alt && matches!(key, Key::Left | Key::Right))
     }
 }
 fn divider(id: &str, name: &str) -> El {
@@ -2022,13 +1689,13 @@ mod tests {
             Size::new(320., 240.),
         ] {
             settle(&mut view, &mut ui, size);
-            assert_eq!(view.count(), 1_000_000);
+            assert_eq!(view.tab().count(), 1_000_000);
             assert!(
-                view.rows_built <= (view.viewport.height / ROW).ceil() as usize + 6,
+                view.tab().rows_built <= (view.tab().viewport.height / ROW).ceil() as usize + 6,
                 "{}",
                 view.evidence()
             );
-            assert!(view.rows_built < 100, "{}", view.evidence());
+            assert!(view.tab().rows_built < 100, "{}", view.evidence());
             let scene = ui.scene().unwrap();
             let root = scene.surface("browser-root").unwrap().frame;
             let files = scene.surface("files-pane").unwrap().frame;
@@ -2046,7 +1713,7 @@ mod tests {
         let mut view = BrowserView::fixture(0);
         let mut ui = make_ui().unwrap();
         settle(&mut view, &mut ui, Size::new(640., 480.));
-        assert_eq!(view.rows_built, 0);
+        assert_eq!(view.tab().rows_built, 0);
         assert!(
             ui.scene()
                 .unwrap()
@@ -2076,7 +1743,7 @@ mod interaction_and_font_tests {
         for _ in 0..4 {
             step(&mut view, &mut ui, Input::default());
         }
-        assert_eq!(view.selected, Some(8));
+        assert_eq!(view.tab().selected, Some(8));
         step(
             &mut view,
             &mut ui,
@@ -2091,8 +1758,8 @@ mod interaction_and_font_tests {
         for _ in 0..3 {
             step(&mut view, &mut ui, Input::default());
         }
-        assert_eq!(view.selection.count(), 0);
-        assert_eq!(view.selected, Some(8));
+        assert_eq!(view.tab().selection.count(), 0);
+        assert_eq!(view.tab().selected, Some(8));
         step(
             &mut view,
             &mut ui,
@@ -2107,7 +1774,7 @@ mod interaction_and_font_tests {
         for _ in 0..2 {
             step(&mut view, &mut ui, Input::default());
         }
-        assert_eq!(view.selected, Some(9));
+        assert_eq!(view.tab().selected, Some(9));
     }
     #[test]
     fn pointer_selection_then_end_reaches_the_last_virtual_row() {
@@ -2125,7 +1792,7 @@ mod interaction_and_font_tests {
         let first = ui
             .scene()
             .unwrap()
-            .surface(&format!("{}/item/0", view.list_id()))
+            .surface(&format!("{}/item/0", view.tab().list_id()))
             .unwrap()
             .frame;
         let point = Point::new(
@@ -2143,13 +1810,13 @@ mod interaction_and_font_tests {
         step(&mut view, &mut ui, Input::from(pointer(false)));
         step(&mut view, &mut ui, Input::from(pointer(false)));
         assert_eq!(
-            view.selected,
+            view.tab().selected,
             Some(0),
             "pointer press must select the clicked row"
         );
         assert_eq!(
             ui.focus_key(),
-            Some(format!("{}/item/0", view.list_id()).as_str()),
+            Some(format!("{}/item/0", view.tab().list_id()).as_str()),
             "pointer must focus the collection row rather than painted decoration"
         );
         step(
@@ -2166,13 +1833,13 @@ mod interaction_and_font_tests {
         );
         step(&mut view, &mut ui, Input::from(pointer(false)));
         step(&mut view, &mut ui, Input::from(pointer(false)));
-        assert_eq!(view.selected, Some(999_999));
+        assert_eq!(view.tab().selected, Some(999_999));
         assert_eq!(
             ui.focus_key(),
-            Some(format!("{}/item/999999", view.list_id()).as_str())
+            Some(format!("{}/item/999999", view.tab().list_id()).as_str())
         );
-        assert!(view.visible.contains(&999_999), "{}", view.evidence());
-        assert!(view.rows_built < 40, "{}", view.evidence());
+        assert!(view.tab().visible.contains(&999_999), "{}", view.evidence());
+        assert!(view.tab().rows_built < 40, "{}", view.evidence());
         for _ in 0..4 {
             let tree = view.build(&mut ui, &Input::default());
             ui.frame(tree, Some(Size::new(640., 480.)), Input::default(), 0.016)
@@ -2180,11 +1847,11 @@ mod interaction_and_font_tests {
             view.after_frame(&mut ui);
         }
         assert!(
-            view.visible.contains(&999_999),
+            view.tab().visible.contains(&999_999),
             "resize hid the active row: {}",
             view.evidence()
         );
-        assert!(view.rows_built < 40, "{}", view.evidence());
+        assert!(view.tab().rows_built < 40, "{}", view.evidence());
     }
 
     #[test]
@@ -2298,7 +1965,7 @@ mod multiselection_tests {
             self.settle();
         }
         fn row_point(&self, index: usize) -> Point {
-            let id = format!("{}/item/{index}", self.view.list_id());
+            let id = format!("{}/item/{index}", self.view.tab().list_id());
             let row = self.ui.scene().unwrap().surface(&id).unwrap().frame;
             Point::new(row.x + row.size.width / 2., row.y + row.size.height / 2.)
         }
@@ -2322,8 +1989,9 @@ mod multiselection_tests {
         }
         fn indices(&self) -> Vec<usize> {
             self.view
+                .tab()
                 .selection
-                .ranges(self.view.selection.revision())
+                .ranges(self.view.tab().selection.revision())
                 .unwrap()
                 .iter()
                 .cloned()
@@ -2372,9 +2040,9 @@ mod multiselection_tests {
         let mut h = Harness::fixture(50);
         h.click(1, Mods::default());
         assert!(h.ui.focus_key().unwrap().ends_with("/item/1"));
-        let inspector = h.view.show_inspector;
+        let inspector = h.view.tab().show_inspector;
         h.key(Key::Down, CTRL);
-        assert_eq!(h.view.selected, Some(2));
+        assert_eq!(h.view.tab().selected, Some(2));
         assert_eq!(h.indices(), [1]);
         assert!(h.ui.focus_key().unwrap().ends_with("/item/2"));
         assert_eq!(
@@ -2384,12 +2052,12 @@ mod multiselection_tests {
         );
         h.key(Key::Space, CTRL);
         assert_eq!(h.indices(), [1, 2]);
-        assert_eq!(h.view.show_inspector, inspector);
+        assert_eq!(h.view.tab().show_inspector, inspector);
         h.key(Key::Space, CTRL);
         assert_eq!(h.indices(), [1]);
         h.key(Key::Escape, Mods::default());
         assert!(h.indices().is_empty());
-        assert_eq!(h.view.selected, Some(2));
+        assert_eq!(h.view.tab().selected, Some(2));
         assert_eq!(h.cyan_rows(), 0);
         assert_eq!(h.ui.focus_key(), Some("file-list"));
         h.key(Key::Down, Mods::default());
@@ -2405,25 +2073,29 @@ mod multiselection_tests {
         let mut h = Harness::fixture(1_000_000);
         h.click(1, Mods::default());
         h.key(Key::End, Mods::default());
-        assert_eq!(h.view.selected, Some(999_999));
+        assert_eq!(h.view.tab().selected, Some(999_999));
         // Move the viewport independently of the cursor before selecting all.
-        h.view.list.scroll_to_item(500_000, ScrollTo::Start);
+        h.view
+            .tab_mut()
+            .list
+            .scroll_to_item(500_000, ScrollTo::Start);
         h.settle();
-        let scroll = h.view.list.scroll_offset();
-        let visible = h.view.visible.clone();
+        let scroll = h.view.tab().list.scroll_offset();
+        let visible = h.view.tab().visible.clone();
         h.key(Key::Char('a'), CTRL);
-        assert_eq!(h.view.selection.count(), 1_000_000);
+        assert_eq!(h.view.tab().selection.count(), 1_000_000);
         assert_eq!(
             h.view
+                .tab()
                 .selection
-                .ranges(h.view.selection.revision())
+                .ranges(h.view.tab().selection.revision())
                 .unwrap(),
             std::slice::from_ref(&(0..1_000_000))
         );
-        assert_eq!(h.view.list.scroll_offset(), scroll);
-        assert_eq!(h.view.visible, visible);
-        assert_eq!(h.view.selected, Some(999_999));
-        assert!(h.view.rows_built < 40, "{}", h.view.evidence());
+        assert_eq!(h.view.tab().list.scroll_offset(), scroll);
+        assert_eq!(h.view.tab().visible, visible);
+        assert_eq!(h.view.tab().selected, Some(999_999));
+        assert!(h.view.tab().rows_built < 40, "{}", h.view.evidence());
         assert!(h.view.evidence().contains("\"selected_count\":1000000"));
     }
 
@@ -2457,7 +2129,7 @@ mod multiselection_tests {
             ..Input::default()
         });
         h.settle();
-        assert_eq!(h.view.path_text, "replacement");
+        assert_eq!(h.view.tab().path_text, "replacement");
         assert_eq!(h.indices(), [0]);
     }
 
@@ -2482,7 +2154,7 @@ mod multiselection_tests {
         assert!(h.ui.focus_is_text());
         let focus = h.ui.focus_key().unwrap().to_owned();
         // Complete a real worker refresh while the editor retains input focus.
-        h.view.navigate(fixture.0.clone());
+        h.view.tab_mut().navigate(fixture.0.clone());
         complete(&mut h);
         assert_eq!(h.ui.focus_key(), Some(focus.as_str()));
         assert!(h.ui.focus_is_text());
@@ -2492,7 +2164,7 @@ mod multiselection_tests {
             ..Input::default()
         });
         h.settle();
-        assert_eq!(h.view.path_text, "still editing");
+        assert_eq!(h.view.tab().path_text, "still editing");
         assert!(h.indices().is_empty());
     }
 
@@ -2520,7 +2192,10 @@ mod multiselection_tests {
         let until = Instant::now() + Duration::from_secs(10);
         loop {
             h.step(Input::default());
-            if !matches!(h.view.browser.as_ref().unwrap().state(), LoadState::Loading) {
+            if !matches!(
+                h.view.tab().browser.as_ref().unwrap().state(),
+                LoadState::Loading
+            ) {
                 break;
             }
             assert!(Instant::now() < until);
@@ -2542,8 +2217,8 @@ mod multiselection_tests {
         };
         complete(&mut h);
         h.click(0, Mods::default());
-        let revision = h.view.selection.revision().clone();
-        let old_id = h.view.list_id();
+        let revision = h.view.tab().selection.revision().clone();
+        let old_id = h.view.tab().list_id();
         let point = h.row_point(1);
         h.step(Input::from(PointerInput {
             pos: Some(point),
@@ -2556,17 +2231,17 @@ mod multiselection_tests {
         }));
         std::fs::remove_file(fixture.0.join("alpha")).unwrap();
         std::fs::write(fixture.0.join("gamma"), b"new").unwrap();
-        h.view.navigate(fixture.0.clone());
+        h.view.tab_mut().navigate(fixture.0.clone());
         complete(&mut h);
-        assert_eq!(h.view.count(), 2);
-        assert_ne!(h.view.list_id(), old_id);
-        assert_ne!(*h.view.selection.revision(), revision);
+        assert_eq!(h.view.tab().count(), 2);
+        assert_ne!(h.view.tab().list_id(), old_id);
+        assert_ne!(*h.view.tab().selection.revision(), revision);
         assert_eq!(
-            h.view.selection.ranges(&revision),
+            h.view.tab().selection.ranges(&revision),
             Err(browser_core::selection::SelectionError::StaleRevision)
         );
         assert!(h.indices().is_empty());
-        assert_eq!(h.view.selected, None);
+        assert_eq!(h.view.tab().selected, None);
         h.step(Input::from(PointerInput {
             pos: Some(point),
             ..PointerInput::default()
@@ -2579,7 +2254,7 @@ mod multiselection_tests {
         h.click(0, Mods::default());
         assert_eq!(h.indices(), [0]);
         assert_eq!(
-            h.view.browser.as_ref().unwrap().entries()[0].path,
+            h.view.tab().browser.as_ref().unwrap().entries()[0].path,
             fixture.0.join("beta")
         );
     }
@@ -2603,13 +2278,13 @@ mod multiselection_tests {
             size: Size::new(1024., 720.),
         };
         // This is the same navigation/reveal handshake as FindAction::Open.
-        h.view.navigate(fixture.0.clone());
-        h.view.reveal_path = Some(native.clone());
+        h.view.tab_mut().navigate(fixture.0.clone());
+        h.view.tab_mut().reveal_path = Some(native.clone());
         complete(&mut h);
-        let index = h.view.selected.unwrap();
+        let index = h.view.tab().selected.unwrap();
         assert_eq!(h.indices(), [index]);
         assert_eq!(
-            h.view.browser.as_ref().unwrap().entries()[index].path,
+            h.view.tab().browser.as_ref().unwrap().entries()[index].path,
             native
         );
         assert!(
@@ -2618,7 +2293,7 @@ mod multiselection_tests {
                 .ends_with(&format!("/item/{index}"))
         );
         h.key(Key::Down, CTRL);
-        assert_eq!(h.view.selection.count(), 1);
+        assert_eq!(h.view.tab().selection.count(), 1);
     }
 
     #[test]
@@ -2636,19 +2311,22 @@ mod multiselection_tests {
         };
         complete(&mut h);
         h.key(Key::Char('a'), CTRL);
-        let snapshot = h.view.browser.as_ref().unwrap().snapshot().unwrap();
-        assert_eq!(snapshot.revision(), h.view.selection.revision());
+        let snapshot = h.view.tab().browser.as_ref().unwrap().snapshot().unwrap();
+        assert_eq!(snapshot.revision(), h.view.tab().selection.revision());
         let ticket = snapshot
-            .ticket(&h.view.selection, TicketLimits::default())
+            .ticket(&h.view.tab().selection, TicketLimits::default())
             .unwrap();
         let original_revision = ticket.revision().clone();
         std::fs::remove_file(&a).unwrap();
         std::fs::write(fixture.0.join("gamma"), b"replacement").unwrap();
-        h.view.navigate(fixture.0.clone());
+        h.view.tab_mut().navigate(fixture.0.clone());
         complete(&mut h);
-        assert_ne!(h.view.selection.revision(), &original_revision);
+        assert_ne!(h.view.tab().selection.revision(), &original_revision);
         assert!(matches!(
-            ticket.materialize(h.view.selection.revision(), MaterializeLimits::default()),
+            ticket.materialize(
+                h.view.tab().selection.revision(),
+                MaterializeLimits::default()
+            ),
             Err(TicketError::StaleRevision)
         ));
         // An already-authorized action retains its old native identities. It
@@ -2666,6 +2344,6 @@ mod multiselection_tests {
         };
         assert_eq!(paths.paths(), &[a, b]);
         assert_eq!(paths.revision(), &original_revision);
-        assert_eq!(h.view.selection.count(), 0);
+        assert_eq!(h.view.tab().selection.count(), 0);
     }
 }
