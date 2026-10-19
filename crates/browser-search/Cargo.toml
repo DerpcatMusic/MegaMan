@@ -1,0 +1,11 @@
+[package]
+name = "browser-search"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Cancellable native-path filename index and memory-only paged queries"
+
+[dependencies]
+caseless = "0.2.2"

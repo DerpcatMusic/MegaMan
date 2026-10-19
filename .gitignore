@@ -1,0 +1,8 @@
+/target/
+/.impeccable/review/
+*.profraw
+__pycache__/
+
+/crates/browser-ui/tests/transfers-generated/
+
+/crates/browser-ui/tests/*-generated/

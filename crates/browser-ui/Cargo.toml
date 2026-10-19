@@ -1,0 +1,19 @@
+[package]
+name = "browser-ui"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+browser-core.workspace = true
+browser-archive.workspace = true
+browser-search.workspace = true
+mui.workspace = true
+epaint_default_fonts.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+browser-native.workspace = true
+browser-transfer.workspace = true
+browser-operations.workspace = true
