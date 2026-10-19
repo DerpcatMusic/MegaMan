@@ -8,6 +8,7 @@
 
 pub mod listing;
 pub mod selection;
+pub mod workspace;
 pub use listing::ListingSnapshot;
 
 use listing::{ListingData, MaterializeJob, TicketData};
