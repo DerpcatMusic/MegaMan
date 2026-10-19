@@ -9,4 +9,3 @@ description = "Explicit, bounded Linux copy-to-new-destination transactions"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "=1.1.5", features = ["fs", "rand"] }
-

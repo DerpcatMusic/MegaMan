@@ -1,0 +1,120 @@
+{
+  "repository": "DerpcatMusic/MegaMan",
+  "project_url": "https://github.com/users/DerpcatMusic/projects/4",
+  "project_id": "PVT_kwHOAiFWYc4Bnt9U",
+  "milestones": {
+    "File workflows": 1,
+    "Workspace and navigation": 2,
+    "Desktop integration": 3,
+    "Archives and previews": 4,
+    "Providers and advanced views": 5,
+    "Performance and platform qualification": 6
+  },
+  "issues": [
+    {
+      "title": "Copy, paste and extraction qualification",
+      "number": 3,
+      "url": "https://github.com/DerpcatMusic/MegaMan/issues/3",
+      "milestone": "File workflows",
+      "project_item_id": "PVTI_lAHOAiFWYc4Bnt9UzhBy6L0"
+    },
+    {
+      "title": "Tabs, recently closed tabs and reordering",
+      "number": 4,
+      "url": "https://github.com/DerpcatMusic/MegaMan/issues/4",
+      "milestone": "Workspace and navigation",
+      "project_item_id": "PVTI_lAHOAiFWYc4Bnt9UzhBy6RY"
+    },
+    {
+      "title": "Resizable panels and saved workspaces",
+      "number": 5,
+      "url": "https://github.com/DerpcatMusic/MegaMan/issues/5",
+      "milestone": "Workspace and navigation",
+      "project_item_id": "PVTI_lAHOAiFWYc4Bnt9UzhBy6VU"
+    },
+    {
+      "title": "Native inbound and outbound file drag/drop",
+      "number": 6,
+      "url": "https://github.com/DerpcatMusic/MegaMan/issues/6",
+      "milestone": "Desktop integration",
+      "project_item_id": "PVTI_lAHOAiFWYc4Bnt9UzhBy6Y4"
+    },
+    {
+      "title": "Wayland clipboard and desktop integration",
+      "number": 7,
+      "url": "https://github.com/DerpcatMusic/MegaMan/issues/7",
+      "milestone": "Desktop integration",
+      "project_item_id": "PVTI_lAHOAiFWYc4Bnt9UzhBy6dg"
+    },
+    {
+      "title": "Rename, create, move and trash operations",
+      "number": 8,
+      "url": "https://github.com/DerpcatMusic/MegaMan/issues/8",
+      "milestone": "File workflows",
+      "project_item_id": "PVTI_lAHOAiFWYc4Bnt9UzhBy6hQ"
+    },
+    {
+      "title": "Conflict decisions, recovery and undo",
+      "number": 9,
+      "url": "https://github.com/DerpcatMusic/MegaMan/issues/9",
+      "milestone": "File workflows",
+      "project_item_id": "PVTI_lAHOAiFWYc4Bnt9UzhBy6lc"
+    },
+    {
+      "title": "Archive passwords, creation and additional formats",
+      "number": 10,
+      "url": "https://github.com/DerpcatMusic/MegaMan/issues/10",
+      "milestone": "Archives and previews",
+      "project_item_id": "PVTI_lAHOAiFWYc4Bnt9UzhBy6o4"
+    },
+    {
+      "title": "Previews, thumbnails and archive drag staging",
+      "number": 11,
+      "url": "https://github.com/DerpcatMusic/MegaMan/issues/11",
+      "milestone": "Archives and previews",
+      "project_item_id": "PVTI_lAHOAiFWYc4Bnt9UzhBy6s0"
+    },
+    {
+      "title": "Indexed system-wide finding and watcher convergence",
+      "number": 12,
+      "url": "https://github.com/DerpcatMusic/MegaMan/issues/12",
+      "milestone": "Providers and advanced views",
+      "project_item_id": "PVTI_lAHOAiFWYc4Bnt9UzhBy6wk"
+    },
+    {
+      "title": "Bookmarks, recents, settings and command search",
+      "number": 13,
+      "url": "https://github.com/DerpcatMusic/MegaMan/issues/13",
+      "milestone": "Workspace and navigation",
+      "project_item_id": "PVTI_lAHOAiFWYc4Bnt9UzhBy62g"
+    },
+    {
+      "title": "Advanced views, disk usage and providers",
+      "number": 14,
+      "url": "https://github.com/DerpcatMusic/MegaMan/issues/14",
+      "milestone": "Providers and advanced views",
+      "project_item_id": "PVTI_lAHOAiFWYc4Bnt9UzhBy67s"
+    },
+    {
+      "title": "Accessibility, IME and multilingual text",
+      "number": 15,
+      "url": "https://github.com/DerpcatMusic/MegaMan/issues/15",
+      "milestone": "Performance and platform qualification",
+      "project_item_id": "PVTI_lAHOAiFWYc4Bnt9UzhBy7Ao"
+    },
+    {
+      "title": "Windows, macOS and ARM64 qualification",
+      "number": 16,
+      "url": "https://github.com/DerpcatMusic/MegaMan/issues/16",
+      "milestone": "Performance and platform qualification",
+      "project_item_id": "PVTI_lAHOAiFWYc4Bnt9UzhBy7FE"
+    },
+    {
+      "title": "Performance, memory and distribution footprint",
+      "number": 17,
+      "url": "https://github.com/DerpcatMusic/MegaMan/issues/17",
+      "milestone": "Performance and platform qualification",
+      "project_item_id": "PVTI_lAHOAiFWYc4Bnt9UzhBy7JA"
+    }
+  ]
+}

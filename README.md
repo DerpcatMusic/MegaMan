@@ -26,7 +26,7 @@ cargo clippy --workspace --all-targets --no-default-features --locked -- -D warn
 
 Native fixture scripts in `scripts/` use owned Xvfb displays, actual keyboard/mouse input and filesystem oracles. They require Xvfb, xdotool, ImageMagick and Python-Xlib. Pass an explicit executable and a new or empty output directory. Functional fixtures do not establish latency or hardware GPU performance.
 
-See [development](docs/DEVELOPMENT.md), [architecture](docs/ARCHITECTURE.md) and [roadmap](docs/ROADMAP.md).
+See [development](docs/DEVELOPMENT.md), [architecture](docs/ARCHITECTURE.md), [roadmap](docs/ROADMAP.md), [local validation](docs/VALIDATION.md) and [project board](https://github.com/users/DerpcatMusic/projects/4).
 
 ## Status and license
 
