@@ -1,0 +1,785 @@
+{
+  "schema_version": 1,
+  "run_id": "megaman-launch-20261019",
+  "source_commit": "4b5a8b7aaa70f260347e9227b9b5582eec5fbb82",
+  "equivalent_main_commit": "05ae974db60f2815d7a2be2451cd85c26e301393",
+  "source_clean": true,
+  "artifact_sha256": "becd7a044c88d69d9482ecd6ec3db20b2ed6b8f551c70ec9d824718a4fc1cda8",
+  "platform": {
+    "target": "x86_64-unknown-linux-gnu",
+    "desktop": "owned Xvfb X11 scale1",
+    "renderer": "forced CPU"
+  },
+  "hardware": "Not recorded for this functional run; no hardware/timing qualification.",
+  "build": {
+    "command": "cargo build --release --locked",
+    "compiler": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8\n",
+    "profile": "release, opt-level=s, thin LTO, one codegen unit, stripped symbols",
+    "artifact_bytes": 16985176
+  },
+  "fixture": {
+    "native_suites": [
+      "scripts/smoke-paste-x11.py",
+      "scripts/smoke-extraction-x11.py",
+      "scripts/smoke-mutation-admission-x11.py"
+    ],
+    "oracles": "Independent Python-Xlib peers, Python zipfile and exact filesystem/hash/mode/nanosecond assertions"
+  },
+  "comparator": null,
+  "cache_state": "Uncontrolled; no timing sample recorded.",
+  "measurements": {
+    "executable_bytes": 16985176,
+    "local_rust_tests_passed": 281,
+    "native_cases_passed": 22
+  },
+  "correctness": {
+    "local_formatting": "passed",
+    "local_workspace_tests": "passed",
+    "local_strict_workspace_clippy": "passed",
+    "native_series": [
+      {
+        "name": "native-paste",
+        "passed": true,
+        "cases": [
+          {
+            "case": "copy-basic",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "copy-transfer",
+              "state": "complete",
+              "visible": true,
+              "committed_roots": 3,
+              "roots": 3,
+              "rows_built": 3,
+              "cancel_requested": false,
+              "basic_metadata_verified_roots": 3,
+              "metadata_incomplete_roots": 0,
+              "durability_uncertain_roots": 0
+            }
+          },
+          {
+            "case": "copy-partial",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "copy-transfer",
+              "state": "failed",
+              "visible": true,
+              "committed_roots": 1,
+              "roots": 3,
+              "rows_built": 3,
+              "cancel_requested": false,
+              "basic_metadata_verified_roots": 1,
+              "metadata_incomplete_roots": 0,
+              "durability_uncertain_roots": 0
+            }
+          },
+          {
+            "case": "readonly-root",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "copy-transfer",
+              "state": "complete",
+              "visible": true,
+              "committed_roots": 2,
+              "roots": 2,
+              "rows_built": 2,
+              "cancel_requested": false,
+              "basic_metadata_verified_roots": 2,
+              "metadata_incomplete_roots": 0,
+              "durability_uncertain_roots": 0
+            }
+          },
+          {
+            "case": "cut-refused",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "filesystem",
+              "model_count": 0,
+              "rows_built": 0,
+              "selected_index": null,
+              "selected_count": 0,
+              "selection_range_count": 0,
+              "selection_ranges": [],
+              "selection_ranges_complete": true,
+              "cursor_selected": false,
+              "inspector_open": true,
+              "focus_role": "list",
+              "location_text_bytes": 105,
+              "file_clipboard": {
+                "transport": "X11",
+                "state": "failed",
+                "copied_items": 0,
+                "owns_clipboard": false,
+                "generation": 0
+              },
+              "visible_start": 0,
+              "visible_end": 0,
+              "os_font_fallback_count": 2,
+              "os_font_fallback_bytes": 19719676,
+              "row_height": 25,
+              "overscan": 50,
+              "viewport_width": 588,
+              "viewport_height": 519,
+              "window_width": 1024,
+              "window_height": 720,
+              "layout": "intrinsic flex rows and columns; measured collection viewport",
+              "limitations": [
+                "Uniform list state is O(1); catalogs and fragmented selection can grow with item count",
+                "Native parity and latency unqualified; copy is bounded and per-item"
+              ]
+            }
+          },
+          {
+            "case": "cancel-read",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "filesystem",
+              "model_count": 0,
+              "rows_built": 0,
+              "selected_index": null,
+              "selected_count": 0,
+              "selection_range_count": 0,
+              "selection_ranges": [],
+              "selection_ranges_complete": true,
+              "cursor_selected": false,
+              "inspector_open": true,
+              "focus_role": "none",
+              "location_text_bytes": 105,
+              "file_clipboard": {
+                "transport": "X11",
+                "state": "ready",
+                "copied_items": 0,
+                "owns_clipboard": false,
+                "generation": 0
+              },
+              "visible_start": 0,
+              "visible_end": 0,
+              "os_font_fallback_count": 2,
+              "os_font_fallback_bytes": 19719676,
+              "row_height": 25,
+              "overscan": 50,
+              "viewport_width": 588,
+              "viewport_height": 519,
+              "window_width": 1024,
+              "window_height": 720,
+              "layout": "intrinsic flex rows and columns; measured collection viewport",
+              "limitations": [
+                "Uniform list state is O(1); catalogs and fragmented selection can grow with item count",
+                "Native parity and latency unqualified; copy is bounded and per-item"
+              ]
+            }
+          },
+          {
+            "case": "paste-then-navigate",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "copy-transfer",
+              "state": "complete",
+              "visible": true,
+              "committed_roots": 1,
+              "roots": 1,
+              "rows_built": 1,
+              "cancel_requested": false,
+              "basic_metadata_verified_roots": 1,
+              "metadata_incomplete_roots": 0,
+              "durability_uncertain_roots": 0
+            }
+          },
+          {
+            "case": "text-paste",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "filesystem",
+              "model_count": 0,
+              "rows_built": 0,
+              "selected_index": null,
+              "selected_count": 0,
+              "selection_range_count": 0,
+              "selection_ranges": [],
+              "selection_ranges_complete": true,
+              "cursor_selected": false,
+              "inspector_open": true,
+              "focus_role": "location",
+              "location_text_bytes": 104,
+              "file_clipboard": {
+                "transport": "X11",
+                "state": "ready",
+                "copied_items": 0,
+                "owns_clipboard": false,
+                "generation": 0
+              },
+              "visible_start": 0,
+              "visible_end": 0,
+              "os_font_fallback_count": 2,
+              "os_font_fallback_bytes": 19719676,
+              "row_height": 25,
+              "overscan": 50,
+              "viewport_width": 588,
+              "viewport_height": 552,
+              "window_width": 1024,
+              "window_height": 720,
+              "layout": "intrinsic flex rows and columns; measured collection viewport",
+              "limitations": [
+                "Uniform list state is O(1); catalogs and fragmented selection can grow with item count",
+                "Native parity and latency unqualified; copy is bounded and per-item"
+              ]
+            }
+          },
+          {
+            "case": "back-and-reopen",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "copy-transfer",
+              "state": "complete",
+              "visible": true,
+              "committed_roots": 1,
+              "roots": 1,
+              "rows_built": 1,
+              "cancel_requested": false,
+              "basic_metadata_verified_roots": 1,
+              "metadata_incomplete_roots": 0,
+              "durability_uncertain_roots": 0
+            }
+          }
+        ],
+        "raw_manifest_sha256": "bafb831c3d46a2f7636a0eef25403bbdbdbe6928187d3ab0c29b17336ffb935c"
+      },
+      {
+        "name": "native-extraction",
+        "passed": true,
+        "cases": [
+          {
+            "case": "whole",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "extraction",
+              "busy": true,
+              "visible": true,
+              "job_sequence": 1,
+              "control_epoch": 5,
+              "state": "Some(Terminal)",
+              "cancel_requested": false,
+              "destination_edited": false,
+              "window_width": 320,
+              "window_height": 240,
+              "password_entry": false
+            },
+            "output_entries": 6
+          },
+          {
+            "case": "selected-record",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "extraction",
+              "busy": true,
+              "visible": true,
+              "job_sequence": 1,
+              "control_epoch": 5,
+              "state": "Some(Terminal)",
+              "cancel_requested": false,
+              "destination_edited": false,
+              "window_width": 1024,
+              "window_height": 720,
+              "password_entry": false
+            },
+            "output_entries": 1
+          },
+          {
+            "case": "current-folder",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "extraction",
+              "busy": true,
+              "visible": true,
+              "job_sequence": 1,
+              "control_epoch": 5,
+              "state": "Some(Terminal)",
+              "cancel_requested": false,
+              "destination_edited": false,
+              "window_width": 1024,
+              "window_height": 720,
+              "password_entry": false
+            },
+            "output_entries": 5
+          },
+          {
+            "case": "retained-lease",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "extraction",
+              "busy": true,
+              "visible": true,
+              "job_sequence": 1,
+              "control_epoch": 5,
+              "state": "Some(Terminal)",
+              "cancel_requested": false,
+              "destination_edited": false,
+              "window_width": 1024,
+              "window_height": 720,
+              "password_entry": false
+            },
+            "output_entries": 6
+          },
+          {
+            "case": "destination-conflict",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "extraction",
+              "busy": true,
+              "visible": true,
+              "job_sequence": 1,
+              "control_epoch": 5,
+              "state": "Some(Terminal)",
+              "cancel_requested": false,
+              "destination_edited": false,
+              "window_width": 1024,
+              "window_height": 720,
+              "password_entry": false
+            },
+            "output_entries": 1
+          },
+          {
+            "case": "unsafe-name",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "extraction",
+              "busy": true,
+              "visible": true,
+              "job_sequence": 1,
+              "control_epoch": 3,
+              "state": "Some(Terminal)",
+              "cancel_requested": false,
+              "destination_edited": false,
+              "window_width": 1024,
+              "window_height": 720,
+              "password_entry": false
+            },
+            "output_entries": 0
+          },
+          {
+            "case": "cancel-prepared",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "extraction",
+              "busy": true,
+              "visible": true,
+              "job_sequence": 1,
+              "control_epoch": 5,
+              "state": "Some(Terminal)",
+              "cancel_requested": true,
+              "destination_edited": false,
+              "window_width": 1024,
+              "window_height": 720,
+              "password_entry": false
+            },
+            "output_entries": 0
+          },
+          {
+            "case": "source-changed",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "extraction",
+              "busy": true,
+              "visible": true,
+              "job_sequence": 1,
+              "control_epoch": 5,
+              "state": "Some(Terminal)",
+              "cancel_requested": false,
+              "destination_edited": false,
+              "window_width": 1024,
+              "window_height": 720,
+              "password_entry": false
+            },
+            "output_entries": 0
+          },
+          {
+            "case": "native-parent",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "extraction",
+              "busy": true,
+              "visible": true,
+              "job_sequence": 1,
+              "control_epoch": 5,
+              "state": "Some(Terminal)",
+              "cancel_requested": false,
+              "destination_edited": false,
+              "window_width": 1024,
+              "window_height": 720,
+              "password_entry": false
+            },
+            "output_entries": 6
+          }
+        ],
+        "raw_manifest_sha256": "d8cdf1a34b03f549e45a43302e80c926fde74410839e6e702364e70bfac66a8c"
+      },
+      {
+        "name": "native-cross",
+        "passed": true,
+        "cases": [
+          {
+            "case": "extraction-blocks-paste",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "copy-transfer",
+              "state": "complete",
+              "visible": true,
+              "committed_roots": 1,
+              "roots": 1,
+              "rows_built": 1,
+              "cancel_requested": false,
+              "basic_metadata_verified_roots": 1,
+              "metadata_incomplete_roots": 0,
+              "durability_uncertain_roots": 0
+            },
+            "boundaries": [
+              {
+                "name": "Prepared blocks Paste",
+                "host_tree": {
+                  "sample.zip": "6b8dbdf95ec074efaa76cac95f2bb1c813712125ea6a8e7cfc1e688e9b3430a9"
+                },
+                "native_payload_requests": 0
+              },
+              {
+                "name": "Unacknowledged extraction terminal blocks Paste",
+                "host_tree": {
+                  "Extracted ZIP": "directory",
+                  "sample.zip": "6b8dbdf95ec074efaa76cac95f2bb1c813712125ea6a8e7cfc1e688e9b3430a9",
+                  "Extracted ZIP/verified.txt": "5840e6611cfeb513b180a05ea8cb15eed320b2feebaab2eed34118e37084e628"
+                },
+                "native_payload_requests": 0
+              },
+              {
+                "name": "Paste succeeds after extraction acknowledgement",
+                "host_tree": {
+                  "Extracted ZIP": "directory",
+                  "sample.zip": "6b8dbdf95ec074efaa76cac95f2bb1c813712125ea6a8e7cfc1e688e9b3430a9",
+                  "clipboard-item.txt": "9320183efe2e40d678b7872edd5ed265c0bd1b651d086694ef6acd5efcd4b248",
+                  "Extracted ZIP/verified.txt": "5840e6611cfeb513b180a05ea8cb15eed320b2feebaab2eed34118e37084e628"
+                },
+                "native_payload_requests": 1
+              }
+            ],
+            "peer_exit_code": 0,
+            "peer_requests": [
+              "READY 2097152",
+              "REQUEST x-special/gnome-copied-files"
+            ]
+          },
+          {
+            "case": "extraction-refresh",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "filesystem",
+              "model_count": 2,
+              "rows_built": 2,
+              "selected_index": null,
+              "selected_count": 0,
+              "selection_range_count": 0,
+              "selection_ranges": [],
+              "selection_ranges_complete": true,
+              "cursor_selected": false,
+              "inspector_open": true,
+              "focus_role": "list",
+              "location_text_bytes": 105,
+              "file_clipboard": {
+                "transport": "X11",
+                "state": "ready",
+                "copied_items": 0,
+                "owns_clipboard": false,
+                "generation": 0
+              },
+              "visible_start": 0,
+              "visible_end": 2,
+              "os_font_fallback_count": 2,
+              "os_font_fallback_bytes": 19719676,
+              "row_height": 25,
+              "overscan": 50,
+              "viewport_width": 588,
+              "viewport_height": 552,
+              "window_width": 1024,
+              "window_height": 720,
+              "layout": "intrinsic flex rows and columns; measured collection viewport",
+              "limitations": [
+                "Uniform list state is O(1); catalogs and fragmented selection can grow with item count",
+                "Native parity and latency unqualified; copy is bounded and per-item"
+              ]
+            },
+            "boundaries": [
+              {
+                "name": "Prepared blocks Paste",
+                "host_tree": {
+                  "sample.zip": "b1571b1125894274db4118579c73abae7d3212af0933f80cafef5bc77f9d1d31"
+                },
+                "native_payload_requests": 0
+              },
+              {
+                "name": "Unacknowledged extraction terminal blocks Paste",
+                "host_tree": {
+                  "Extracted ZIP": "directory",
+                  "sample.zip": "b1571b1125894274db4118579c73abae7d3212af0933f80cafef5bc77f9d1d31",
+                  "Extracted ZIP/verified.txt": "5840e6611cfeb513b180a05ea8cb15eed320b2feebaab2eed34118e37084e628"
+                },
+                "native_payload_requests": 0
+              },
+              {
+                "name": "Publication refreshes the unfiltered host listing",
+                "host_tree": {
+                  "Extracted ZIP": "directory",
+                  "sample.zip": "b1571b1125894274db4118579c73abae7d3212af0933f80cafef5bc77f9d1d31",
+                  "Extracted ZIP/verified.txt": "5840e6611cfeb513b180a05ea8cb15eed320b2feebaab2eed34118e37084e628"
+                },
+                "native_payload_requests": 0
+              }
+            ],
+            "peer_exit_code": 0,
+            "peer_requests": [
+              "READY 2097152"
+            ]
+          },
+          {
+            "case": "copy-blocks-extraction",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "extraction",
+              "busy": true,
+              "visible": true,
+              "job_sequence": 1,
+              "control_epoch": 5,
+              "state": "Some(Terminal)",
+              "cancel_requested": false,
+              "destination_edited": false,
+              "window_width": 1024,
+              "window_height": 720,
+              "password_entry": false
+            },
+            "boundaries": [
+              {
+                "name": "Unacknowledged Copy result blocks archive extraction",
+                "host_tree": {
+                  "sample.zip": "e146ddcbf89906fdb8654870ed8f76562ab7d6c8e74b3946a6eb60de430c8a09",
+                  "clipboard-item.txt": "9320183efe2e40d678b7872edd5ed265c0bd1b651d086694ef6acd5efcd4b248"
+                },
+                "native_payload_requests": 1
+              },
+              {
+                "name": "Prepared extraction still blocks Paste with retained idle Copy controller",
+                "host_tree": {
+                  "sample.zip": "e146ddcbf89906fdb8654870ed8f76562ab7d6c8e74b3946a6eb60de430c8a09",
+                  "clipboard-item.txt": "9320183efe2e40d678b7872edd5ed265c0bd1b651d086694ef6acd5efcd4b248"
+                },
+                "native_payload_requests": 1
+              },
+              {
+                "name": "Extraction succeeds after Copy acknowledgement",
+                "host_tree": {
+                  "Extracted ZIP": "directory",
+                  "sample.zip": "e146ddcbf89906fdb8654870ed8f76562ab7d6c8e74b3946a6eb60de430c8a09",
+                  "clipboard-item.txt": "9320183efe2e40d678b7872edd5ed265c0bd1b651d086694ef6acd5efcd4b248",
+                  "Extracted ZIP/verified.txt": "5840e6611cfeb513b180a05ea8cb15eed320b2feebaab2eed34118e37084e628"
+                },
+                "native_payload_requests": 1
+              }
+            ],
+            "peer_exit_code": 0,
+            "peer_requests": [
+              "READY 2097152",
+              "REQUEST x-special/gnome-copied-files"
+            ]
+          },
+          {
+            "case": "cancel-read-archive",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "filesystem",
+              "model_count": 1,
+              "rows_built": 1,
+              "selected_index": 0,
+              "selected_count": 1,
+              "selection_range_count": 1,
+              "selection_ranges": [
+                [
+                  0,
+                  1
+                ]
+              ],
+              "selection_ranges_complete": true,
+              "cursor_selected": true,
+              "inspector_open": true,
+              "focus_role": "list",
+              "location_text_bytes": 106,
+              "file_clipboard": {
+                "transport": "X11",
+                "state": "ready",
+                "copied_items": 0,
+                "owns_clipboard": false,
+                "generation": 0
+              },
+              "visible_start": 0,
+              "visible_end": 1,
+              "os_font_fallback_count": 2,
+              "os_font_fallback_bytes": 19719676,
+              "row_height": 25,
+              "overscan": 50,
+              "viewport_width": 588,
+              "viewport_height": 519,
+              "window_width": 1024,
+              "window_height": 720,
+              "layout": "intrinsic flex rows and columns; measured collection viewport",
+              "limitations": [
+                "Uniform list state is O(1); catalogs and fragmented selection can grow with item count",
+                "Native parity and latency unqualified; copy is bounded and per-item"
+              ]
+            },
+            "boundaries": [
+              {
+                "name": "Late clipboard reply after visible Cancel produces no copy",
+                "host_tree": {
+                  "sample.zip": "72cf083b2f5a42b36800b50775444819c7e0cf3fe5fc5221fd48d83f27eecf0f"
+                },
+                "native_payload_requests": 2
+              }
+            ],
+            "peer_exit_code": 0,
+            "peer_requests": [
+              "READY 2097152",
+              "REQUEST x-special/gnome-copied-files",
+              "REQUEST x-special/gnome-copied-files",
+              "NORMAL"
+            ]
+          },
+          {
+            "case": "cancel-read-find",
+            "passed": true,
+            "exit_code": 0,
+            "evidence": {
+              "schema_version": 1,
+              "mode": "filesystem",
+              "model_count": 1,
+              "rows_built": 1,
+              "selected_index": null,
+              "selected_count": 0,
+              "selection_range_count": 0,
+              "selection_ranges": [],
+              "selection_ranges_complete": true,
+              "cursor_selected": false,
+              "inspector_open": true,
+              "focus_role": "list",
+              "location_text_bytes": 103,
+              "file_clipboard": {
+                "transport": "X11",
+                "state": "ready",
+                "copied_items": 0,
+                "owns_clipboard": false,
+                "generation": 0
+              },
+              "visible_start": 0,
+              "visible_end": 1,
+              "os_font_fallback_count": 2,
+              "os_font_fallback_bytes": 19719676,
+              "row_height": 25,
+              "overscan": 50,
+              "viewport_width": 588,
+              "viewport_height": 519,
+              "window_width": 1024,
+              "window_height": 720,
+              "layout": "intrinsic flex rows and columns; measured collection viewport",
+              "limitations": [
+                "Uniform list state is O(1); catalogs and fragmented selection can grow with item count",
+                "Native parity and latency unqualified; copy is bounded and per-item"
+              ]
+            },
+            "boundaries": [
+              {
+                "name": "Late clipboard reply after visible Cancel produces no copy",
+                "host_tree": {
+                  "sample.zip": "5b13dbf73d4398ed0185928b901f9a1863ba31ddfc368937d2aa39b90d69e05d"
+                },
+                "native_payload_requests": 2
+              }
+            ],
+            "peer_exit_code": 0,
+            "peer_requests": [
+              "READY 2097152",
+              "REQUEST x-special/gnome-copied-files",
+              "REQUEST x-special/gnome-copied-files",
+              "NORMAL"
+            ]
+          }
+        ],
+        "raw_manifest_sha256": "19b11828ea4d41de6b1054b1b04a596f8cd9800f8d0062dcd402b6ea02a96aba"
+      }
+    ],
+    "independent_ui_review": {
+      "source_commit": "4b5a8b7aaa70f260347e9227b9b5582eec5fbb82",
+      "artifact_sha256": "becd7a044c88d69d9482ecd6ec3db20b2ed6b8f551c70ec9d824718a4fc1cda8",
+      "result": "no scoped blockers",
+      "captures": [
+        "native-paste/readonly-root/final.png",
+        "native-paste/copy-basic/final.png",
+        "native-paste/copy-basic/final-640x480.png",
+        "native-paste/copy-basic/final-320x240.png",
+        "native-paste/copy-partial/final.png",
+        "native-extraction/whole/prepared-320x240.png",
+        "native-extraction/whole/final-320x240.png",
+        "native-cross/copy-blocks-extraction/copy-terminal-blocks-extraction-320x240.png",
+        "native-cross/copy-blocks-extraction/copy-terminal-blocks-extraction-640x480.png"
+      ],
+      "scope": "Existing owned-X11/CPU captures: aligned full-width rows, readable metadata results, partial outcomes, scrolling extraction controls and stacked status containment. No new focus, fault, accessibility or platform qualification."
+    }
+  },
+  "artifacts": {
+    "retained_locally": "/mnt/Windows11/DEV_WORKSPACE/PluginArtifacts/MegaMan/launch-20261019",
+    "raw_logs_retained_locally": "/mnt/Windows11/DEV_WORKSPACE/Research/megaman-*",
+    "reproduce": "Build exact source, then invoke each script with --binary and a new or empty --out directory."
+  },
+  "limitations": [
+    "Functional Xvfb/CPU evidence only, not latency, throughput, idle CPU, hardware GPU or overall memory measurement.",
+    "No Wayland/Windows/macOS/ARM64, accessibility or IME qualification.",
+    "Native read-only root Paste success is checked; engine-controlled faults/late publication cancellation and synthetic presentation tests remain separate evidence.",
+    "Executable bytes exclude external font/runtime/dependency footprint.",
+    "Native drag/drop and actual tabs are still in development."
+  ]
+}
