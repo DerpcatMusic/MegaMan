@@ -16,6 +16,8 @@ The [compact result](../benchmarks/results/launch-20261019/summary.json) pins so
 
 A separate bounded workspace-model increment passed 10 focused tests, 32 total core tests, strict core Clippy and an independent 10,000-operation oracle before merge. That qualifies tab state semantics, not native tab UI or app-shell operation lifetimes.
 
+The [encrypted ZIP interoperability increment](../benchmarks/results/zip-interop-20261019/summary.json) passed three explicit tests against installed 7-Zip 26.04 on Linux. MegaMan read/extracted eight AES-128/192/256 or legacy ZipCrypto combinations with Stored/Deflate; 7-Zip verified/extracted both MegaMan AES-256 creation combinations. Missing/wrong credentials and a corrupted AES authentication trailer failed without published output or staging residue. All 80 existing archive Rust tests, formatting and strict archive Clippy also passed. This qualifies those owned fixtures and service APIs; password UI and exhaustive ZIP coverage remain separate work.
+
 Native results cover owned Xvfb/X11, forced CPU and scale 1. They do not establish Wayland, Windows/macOS, ARM64, real hardware GPU, accessibility/IME, latency, idle CPU or all-filesystem support.
 
 Independent finish review inspected the read-only Copy result, ordinary/partial Copy at 1024/640/320, short extraction screens and stacked archive status. No blocking alignment, critical-result or control-containment defect was found in those exact captures. Unknown-metadata and durability-failure presentation remain separately tested states rather than newly qualified native faults.

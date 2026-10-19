@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "kind": "functional_interoperability",
+  "source_commit": "7be576e",
+  "date": "2026-10-19",
+  "platform": "Linux x86_64",
+  "external_tool": {
+    "name": "7-Zip",
+    "version": "26.04 (2026-10-05)",
+    "executable_sha256": "f802383f13b8331aabaf779def00a356c8d2b8148255170b75b03028f4d23ad4",
+    "library_sha256": "a87a4bdb8c5a9cfe113d6ba1b30ecf87481d4791e962bbeb216352569e3393e1"
+  },
+  "command": "cargo test --locked -p browser-archive --test zip_interop -- --ignored",
+  "tests_passed": 3,
+  "tests_failed": 0,
+  "external_to_megaman": {
+    "encryption": ["AES128", "AES192", "AES256", "ZipCrypto"],
+    "compression": ["Stored", "Deflate"],
+    "combinations": 8,
+    "checks": [
+      "independent healthy archive verification",
+      "catalog encrypted flags and readable members",
+      "exact member payload reads",
+      "exact extracted payloads and empty directory",
+      "missing and wrong credential failures",
+      "failed extraction leaves no published output or staging residue"
+    ]
+  },
+  "megaman_to_external": {
+    "encryption": ["AES256"],
+    "compression": ["Stored", "Deflate"],
+    "combinations": 2,
+    "checks": [
+      "independent full archive verification",
+      "independent wrong credential rejection",
+      "independent extraction with exact payload comparison"
+    ]
+  },
+  "authentication_failure": {
+    "fixture": "7-Zip AES256 Deflate",
+    "mutation": "last authentication trailer byte of binary.dat flipped",
+    "healthy_control_passed": true,
+    "external_rejected": true,
+    "megaman_error": "Integrity",
+    "published_output_absent": true,
+    "staging_residue_absent": true
+  },
+  "payload_scope": ["nested Unicode filename", "Unicode text", "empty file", "empty directory", "65537-byte deterministic binary"],
+  "other_checks": ["80 archive Rust tests passed", "strict all-target archive Clippy passed", "formatting passed"],
+  "limitations": [
+    "disposable owned fixture passwords only",
+    "legacy ZipCrypto is not authenticated encryption",
+    "password UI was not part of this increment",
+    "not exhaustive ZIP variant, large archive, platform or filesystem qualification",
+    "not a performance measurement"
+  ]
+}
