@@ -11,3 +11,5 @@ Tests create generated fixtures beneath each crate's ignored test directories. U
 Archive interoperability has a separate opt-in test target requiring `7z` on PATH: `cargo test --locked -p browser-archive --test zip_interop -- --ignored`. The ordinary test run marks these external-tool cases ignored; it never silently counts a missing tool as a passing compatibility check. See the [ZIP service notes](../crates/browser-archive/README.md) for fixture scope.
 
 Pull requests should explain behavior, local checks and known limits. Performance reports need exact source/build/fixture identity, correctness oracles, sample counts and measurement boundaries. A valid output is required before a speed sample counts.
+
+See [performance measurement](PERFORMANCE.md) for the owned directory-model harness and its observation limits.
