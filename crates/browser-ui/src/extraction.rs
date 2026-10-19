@@ -800,6 +800,54 @@ mod tests {
         panel.owner = 0;
         assert!(panel.input_owner().is_none());
     }
+    #[test]
+    fn prepared_extraction_survives_origin_tab_retirement_and_keeps_receipt() {
+        let fixture = Fixture::new();
+        let source = fixture.zip();
+        let destination = fixture.0.join("after-tab-close");
+        let mut view = crate::BrowserView::fixture(0);
+        view.tab_mut().archive = Some(crate::archive::ArchivePanel::new(source));
+        let mut controller = ExtractionUi::new();
+        wait(|| {
+            let panel = view.tab_mut().archive.as_mut().unwrap();
+            panel.poll();
+            panel
+                .prepare_extraction(
+                    &mut controller,
+                    ExtractionSelection::All,
+                    destination.clone(),
+                )
+                .then_some(())
+        });
+        view.jobs.extraction = Some(controller);
+        let origin = view.workspace.active().unwrap();
+        ready(view.jobs.extraction.as_mut().unwrap());
+        let removed = view.workspace.close_without_history(origin).unwrap();
+        // The tab's archive browser is actually destroyed off this thread;
+        // the prepared ticket remains owned by the application controller.
+        thread::spawn(move || drop(removed)).join().unwrap();
+        assert!(view.workspace.is_empty());
+        assert!(view.mutations_busy());
+        let panel = view.jobs.extraction.as_mut().unwrap();
+        assert!(panel.command(panel.scope().unwrap(), Command::Start));
+        terminal(panel);
+        assert_eq!(
+            fs::read(destination.join("folder/member")).unwrap(),
+            b"verified payload"
+        );
+        assert!(view.mutations_busy(), "receipt still reserves admission");
+        let mut ui = crate::make_ui().unwrap();
+        for _ in 0..3 {
+            let tree = view.build(&mut ui, &Input::default());
+            ui.frame(tree, Some(Size::new(640., 480.)), Input::default(), 0.016)
+                .unwrap();
+            view.after_frame(&mut ui);
+        }
+        assert!(view.evidence().contains("\"mode\":\"extraction\""));
+        let panel = view.jobs.extraction.as_mut().unwrap();
+        assert!(panel.command(panel.scope().unwrap(), Command::Acknowledge));
+        assert!(!view.mutations_busy());
+    }
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {

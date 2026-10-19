@@ -1608,14 +1608,15 @@ impl TabView {
         jobs.with_mutation_status(ui, tree)
     }
     fn changed(&mut self) -> bool {
-        let changed = std::mem::take(&mut self.geometry_changed);
+        let mut changed = std::mem::take(&mut self.geometry_changed);
+        changed |= self.refresh();
         if let Some(find) = &mut self.find {
-            return find.poll() || changed;
+            changed |= find.poll();
         }
         if let Some(archive) = &mut self.archive {
-            return archive.poll() || changed;
+            changed |= archive.poll();
         }
-        self.refresh() || changed
+        changed
     }
     fn after_frame(&mut self, ui: &mut Ui) {
         self.evidence_focus_role = match ui.focus_key() {

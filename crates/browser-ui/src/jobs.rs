@@ -242,20 +242,20 @@ impl AppJobs {
         }
     }
 
-    pub(super) fn poll(&mut self) -> (bool, Vec<PathBuf>) {
+    pub(super) fn poll(&mut self) -> (bool, [Option<PathBuf>; 2]) {
         let mut changed = self.poll_file_clipboard();
-        let mut refresh = Vec::with_capacity(2);
+        let mut refresh = [None, None];
         if let Some(extraction) = &mut self.extraction {
             changed |= extraction.poll();
             if let Some(parent) = extraction.take_refresh_parent() {
-                refresh.push(parent);
+                refresh[0] = Some(parent);
             }
         }
         #[cfg(target_os = "linux")]
         if let Some(copy) = &mut self.copy_transfers {
             changed |= copy.poll();
             if let Some(destination) = copy.take_refresh_destination() {
-                refresh.push(destination);
+                refresh[1] = Some(destination);
             }
         }
         changed |= std::mem::take(&mut self.geometry_changed);
