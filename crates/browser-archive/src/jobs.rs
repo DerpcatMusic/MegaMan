@@ -16,6 +16,8 @@ use std::{
 use zeroize::Zeroizing;
 
 pub const MAX_EXTRACTION_ITEMS: usize = 512;
+/// Maximum borrowed credential copied into an extraction job, in bytes.
+pub const MAX_EXTRACTION_CREDENTIAL_BYTES: usize = 1024;
 const INPUT_BYTES: usize = 1 << 20;
 const PATH_BYTES: usize = u16::MAX as usize;
 static NEXT_SERVICE: AtomicU64 = AtomicU64::new(1);
@@ -83,13 +85,14 @@ impl fmt::Display for ExtractionSubmitError {
 }
 impl std::error::Error for ExtractionSubmitError {}
 
-/// Copies at most 1024 bytes into a fixed heap allocation. No Clone/persistence.
+/// Copies at most [`MAX_EXTRACTION_CREDENTIAL_BYTES`] into a fixed heap allocation.
+/// No Clone/persistence.
 /// Zeroizing erases this allocation on Drop; caller/backend/OS copies are outside
 /// that guarantee. Never format the original caller input for diagnostics.
 pub struct ExtractionCredential(Zeroizing<Box<[u8]>>);
 impl ExtractionCredential {
     pub fn new(bytes: &[u8]) -> Result<Self, ExtractionSubmitError> {
-        if bytes.len() > 1024 {
+        if bytes.len() > MAX_EXTRACTION_CREDENTIAL_BYTES {
             return Err(ExtractionSubmitError::CredentialTooLong);
         }
         Ok(Self(Zeroizing::new(bytes.to_vec().into_boxed_slice())))
