@@ -95,7 +95,12 @@ impl ExtractionCredential {
         if bytes.len() > MAX_EXTRACTION_CREDENTIAL_BYTES {
             return Err(ExtractionSubmitError::CredentialTooLong);
         }
-        Ok(Self(Zeroizing::new(bytes.to_vec().into_boxed_slice())))
+        // Finish allocation/shrinking while it contains only zeros. Copy the
+        // secret after the fixed buffer is already protected, so conversion
+        // from Vec to Box cannot leave a plaintext allocation behind.
+        let mut credential = Zeroizing::new(vec![0; bytes.len()].into_boxed_slice());
+        credential.copy_from_slice(bytes);
+        Ok(Self(credential))
     }
 }
 impl fmt::Debug for ExtractionCredential {
