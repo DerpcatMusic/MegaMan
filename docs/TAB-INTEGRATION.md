@@ -65,12 +65,37 @@ streams. Programmatic focus can therefore expose an old stream to a newly focuse
 widget. Explicit namespaces alone do not fix that keyboard case, and wrapping the
 returned element does not namespace its internal IDs.
 
-Proposed prerequisite: a narrow reviewed MUI input-discard operation for explicit
-view transitions. It must preserve an owed gesture End, cancel capture/drag/IME,
-and retire current transient keyboard/text/paste/native-text delivery without
-acknowledging app commands or changing persistent editor values. This prerequisite
-needs architecture approval before implementation; it is not an invented existing
-API or a plan to manipulate runtime borrow guards.
+MUI's reviewed `Ui::discard_input_for_view_change()` is available at immutable
+revision `f08ac4737c5a24f9c73ecda4cb68d2aeb7fb1a0a`. It preserves an owed gesture
+End, cancels capture/drag/IME, and discards delivered key/text/paste/native editing
+input, wheel/claims and the outside-click press without changing persistent editor
+state, outbound clipboard text or queued host actions. Retained nodes are scanned;
+no constant-time or measured latency claim is made.
+
+The host calls `View::build(ui, &raw_input)`, then resolves `Ui::frame` with that
+same raw batch, then calls `after_frame` only on successful resolution. The shell
+must therefore keep separate identities for the prior presented scene, the owner
+of the current raw batch, the owner of already delivered Ui input, and the proposed
+next scene. A presentation sequence identifies a delivery; stable surface owner,
+tab/subview generation and relevant revisions decide whether it remains admissible.
+Incrementing a sequence alone must not reject fresh input for an unchanged owner.
+
+Capture the current raw batch's source route at build entry, before committing any
+delivered command. After a transition, clear delivered Ui input before building
+the incoming pane and pass an empty raw Input to raw consumers. After successful
+resolution, clear newly delivered Ui input again before command dispatch if its
+captured source owner no longer matches the resolved pane. This second boundary
+prevents the host's current raw batch from becoming the incoming pane's next
+key/text/paste stream. On failed resolution no proposed owner becomes presented.
+Queued semantic host actions remain intentionally intact: their opaque scoped IDs
+are checked against the exact live owner instead of being retargeted.
+
+Global extraction's future `build(ui, gated_input: &Input)` receives raw input only
+when its previously presented controller owner and epoch match, no transition was
+committed, and the draft already existed in that presentation. A newly created
+draft receives empty input. Secret drafts and their raw batches are never copied
+into tab snapshots or frame evidence. Native file Paste offers and accepted jobs
+are independent of both input barriers and retain their captured native paths.
 
 On a committed surface transition, save the outgoing focus role, invalidate its
 presentation route, discard that frame's transient delivery through the supported
