@@ -366,7 +366,7 @@ mod tests {
         let Undo::Untrash(a) = &t else { panic!() };
         let info = std::fs::read_to_string(&a.trash_info).unwrap();
         assert!(info.contains("Path=f\n"), "{info}");
-        assert_eq!(mount_top(&d.join("f")).unwrap().is_absolute(), true);
+        assert!(mount_top(&d.join("f")).unwrap().is_absolute());
         undo(&t).unwrap();
         assert!(d.join("f").exists());
         std::fs::remove_dir_all(d).unwrap();
