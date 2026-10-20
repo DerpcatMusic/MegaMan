@@ -30,6 +30,7 @@ pub(super) enum Cmd {
     GoForward,
     Bookmark,
     ToggleInspector,
+    ToggleGrid,
 }
 pub(super) const COMMANDS: &[(Cmd, &str, &str)] = &[
     (Cmd::Open, "Open", "Enter"),
@@ -59,6 +60,11 @@ pub(super) const COMMANDS: &[(Cmd, &str, &str)] = &[
     (Cmd::GoForward, "Go forward", "Alt+Right"),
     (Cmd::Bookmark, "Bookmark this folder", "Ctrl+D"),
     (Cmd::ToggleInspector, "Toggle inspector", "Space"),
+    (
+        Cmd::ToggleGrid,
+        "Switch between list and grid view",
+        "Ctrl+G",
+    ),
 ];
 /// Right-click menu, in display order.
 const CONTEXT: &[Cmd] = &[
