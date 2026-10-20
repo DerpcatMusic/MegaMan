@@ -25,6 +25,8 @@ struct Done {
     refresh: Vec<PathBuf>,
     failure: Option<String>,
     verb: &'static str,
+    /// Items moved by copy + trash (no inverse is recorded for these).
+    copied: usize,
 }
 #[derive(Default)]
 pub(super) struct FileOps {
@@ -98,6 +100,37 @@ pub(super) fn batch_plan(
         }
     }
     Ok(plan)
+}
+/// Copy `path` into `dest_dir` (verified, never replacing), then send the original to Trash.
+fn move_across(path: &FsPath, dest_dir: &FsPath) -> Result<(), String> {
+    use browser_operations::{Cancellation, CopyLimits, CopyOptions, CopyOutcome, MetadataPolicy};
+    let name = path.file_name().ok_or("path has no name")?;
+    let limits = CopyLimits {
+        max_entries: 1_000_000,
+        max_bytes: 256 << 30,
+        ..CopyLimits::default()
+    };
+    let options = CopyOptions {
+        metadata: MetadataPolicy::Basic,
+        root_publication: browser_operations::RootPublication::FinalizeBasicAfterPublish,
+        ..CopyOptions::default()
+    };
+    let cancel = Cancellation::default();
+    let plan = browser_operations::plan_copy_new_with_options(
+        path.to_path_buf(),
+        dest_dir.join(name),
+        limits,
+        options,
+        &cancel,
+    )
+    .map_err(|e| e.to_string())?;
+    match browser_operations::execute_copy_new(plan, &cancel, |_| {}) {
+        CopyOutcome::Committed(_) => fsops::trash(path)
+            .map(|_| ())
+            .map_err(|e| format!("copied, but the original could not be trashed: {e}")),
+        CopyOutcome::Cancelled { .. } => Err("cancelled".into()),
+        CopyOutcome::Failed { error, .. } => Err(error.to_string()),
+    }
 }
 fn parent_of(path: &FsPath) -> Option<PathBuf> {
     path.parent().map(FsPath::to_path_buf)
@@ -182,12 +215,14 @@ impl FileOps {
                     refresh: vec![dir],
                     failure: None,
                     verb,
+                    copied: 0,
                 },
                 Err(e) => Done {
                     undo: vec![],
                     refresh: vec![],
                     failure: Some(e.to_string()),
                     verb,
+                    copied: 0,
                 },
             }
         });
@@ -243,6 +278,7 @@ impl FileOps {
                 refresh: Vec::new(),
                 failure: None,
                 verb: "Renamed",
+                copied: 0,
             };
             // All-or-nothing admission: no target may already exist (including another source).
             if let Some((_, name)) = plan.iter().find(|(from, name)| {
@@ -326,6 +362,7 @@ impl FileOps {
                 refresh: vec![dest.clone()],
                 failure: None,
                 verb: "Moved",
+                copied: 0,
             };
             for path in &paths {
                 match fsops::move_into(path, &dest) {
@@ -333,13 +370,21 @@ impl FileOps {
                         done.refresh.extend(parent_of(path));
                         done.undo.push(op);
                     }
+                    Err(e) if e.raw_os_error == Some(18) => {
+                        // Different filesystem: verified copy, then the original goes to Trash.
+                        match move_across(path, &dest) {
+                            Ok(()) => {
+                                done.refresh.extend(parent_of(path));
+                                done.copied += 1;
+                            }
+                            Err(message) => {
+                                done.failure = Some(message);
+                                break;
+                            }
+                        }
+                    }
                     Err(e) => {
-                        let cross = e.raw_os_error == Some(18);
-                        done.failure = Some(if cross {
-                            "different filesystem; copy then delete instead".into()
-                        } else {
-                            e.to_string()
-                        });
+                        done.failure = Some(e.to_string());
                         break;
                     }
                 }
@@ -370,6 +415,7 @@ impl FileOps {
                 refresh,
                 failure,
                 verb: "Undo",
+                copied: 0,
             }
         });
     }
@@ -405,6 +451,7 @@ impl FileOps {
                             refresh,
                             failure,
                             verb: "Moved to Trash",
+                            copied: 0,
                         }
                     });
                 }
@@ -457,8 +504,16 @@ impl FileOps {
                 }
             }
             self.refresh.extend(done.refresh);
+            let copied = done.copied;
             self.message = Some(match done.failure {
                 Some(f) => (format!("{} failed: {f}", done.verb), true),
+                None if copied > 0 => (
+                    format!(
+                        "{} · {copied} copied across filesystems, originals in Trash",
+                        done.verb
+                    ),
+                    false,
+                ),
                 None if count > 1 => (
                     format!("{} · {count} items · Ctrl+Z to undo", done.verb),
                     false,
@@ -709,5 +764,27 @@ mod tests {
             "nothing renamed"
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn cross_filesystem_move_copies_verifies_and_trashes_the_original() {
+        // tmpfs source, dev-drive destination: guaranteed different filesystems.
+        let src = std::path::PathBuf::from(format!("/dev/shm/fileops-xdev-{}", std::process::id()));
+        let dest = std::env::temp_dir().join(format!("fileops-xdev-dest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dest);
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(&src, b"payload").unwrap();
+        let mut ops = FileOps::default();
+        assert!(ops.start_move(vec![src.clone()], dest.clone()));
+        settle(&mut ops);
+        let result = std::fs::read(dest.join(src.file_name().unwrap()));
+        let _ = std::fs::remove_dir_all(src.parent().unwrap().join(format!(
+                ".Trash-{}",
+                std::fs::metadata("/proc/self")
+                    .map(|m| std::os::unix::fs::MetadataExt::uid(&m))
+                    .unwrap_or(0)
+            )));
+        std::fs::remove_dir_all(&dest).unwrap();
+        assert_eq!(result.unwrap(), b"payload");
+        assert!(!src.exists(), "original left its folder");
     }
 }
