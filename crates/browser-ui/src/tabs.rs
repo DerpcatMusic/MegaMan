@@ -454,6 +454,8 @@ impl View for BrowserView {
                 | Key::Escape
                 | Key::Delete
                 | Key::Function(2)
+                | Key::Left
+                | Key::Right
                 | Key::Tab
         ) || ((mods.ctrl || mods.cmd)
             && matches!(
@@ -483,6 +485,8 @@ impl View for BrowserView {
                         | 'H'
                         | 'p'
                         | 'P'
+                        | 'g'
+                        | 'G'
                 )
             ))
             || (mods.alt && matches!(key, Key::Left | Key::Right | Key::Up))

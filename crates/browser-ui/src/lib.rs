@@ -17,6 +17,7 @@ mod palette;
 mod places;
 mod preview;
 mod settings;
+mod thumbs;
 use jobs::AppJobs;
 mod tabs;
 pub use tabs::BrowserView;
@@ -34,6 +35,8 @@ mod clipboard;
 
 const ROW: f64 = 25.0;
 const OVERSCAN: f64 = ROW * 2.0;
+const TILE_W: f64 = 112.0;
+const TILE_H: f64 = 104.0;
 const CONTENT_MIN: f64 = 280.0;
 const RAIL_MIN: f64 = 154.0;
 const INSPECTOR_MIN: f64 = 220.0;
@@ -394,10 +397,13 @@ struct TabView {
     geometry_changed: bool,
     evidence_focus_role: &'static str,
     resize_reveal: Option<usize>,
+    grid: bool,
+    grid_cols: usize,
     find: Option<FindPanel>,
     archive: Option<ArchivePanel>,
     reveal_path: Option<PathBuf>,
     preview: preview::Preview,
+    thumbs: thumbs::Thumbs,
     context_requested: bool,
 }
 
@@ -471,10 +477,13 @@ impl TabView {
             geometry_changed: false,
             evidence_focus_role: "none",
             resize_reveal: None,
+            grid: false,
+            grid_cols: 1,
             find: None,
             archive: None,
             reveal_path: None,
             preview: preview::Preview::default(),
+            thumbs: thumbs::Thumbs::default(),
             context_requested: false,
         }
     }
@@ -564,6 +573,7 @@ impl TabView {
                 }
             }
             Cmd::ToggleInspector => self.show_inspector = !self.show_inspector,
+            Cmd::ToggleGrid => self.toggle_grid(),
             Cmd::NewTab | Cmd::CloseTab | Cmd::ReopenTab | Cmd::NextTab | Cmd::PrevTab => {}
         }
     }
@@ -572,6 +582,7 @@ impl TabView {
             return;
         }
         self.show_inspector = settings.inspector;
+        self.grid = settings.grid;
         if let Some(b) = self.browser.as_mut() {
             b.set_show_hidden(settings.show_hidden);
             b.set_sort(settings.sort);
@@ -583,6 +594,7 @@ impl TabView {
             show_hidden: b.show_hidden(),
             sort: b.sort(),
             inspector: self.show_inspector,
+            grid: self.grid,
         })
     }
     fn toggle_hidden(&mut self) {
@@ -645,6 +657,20 @@ impl TabView {
         self.fixture_count
             .unwrap_or_else(|| self.browser.as_ref().map_or(0, |b| b.entries().len()))
     }
+    /// Items per list line: always 1 in list view.
+    fn cols(&self) -> usize {
+        if self.grid { self.grid_cols.max(1) } else { 1 }
+    }
+    fn lines(&self) -> usize {
+        self.count().div_ceil(self.cols())
+    }
+    fn line_height(&self) -> f64 {
+        if self.grid { TILE_H } else { ROW }
+    }
+    fn toggle_grid(&mut self) {
+        self.grid = !self.grid;
+        self.list = ListState::uniform_count(self.lines(), self.line_height());
+    }
     fn list_id(&self) -> String {
         format!("file-list/revision/{}", self.listing_serial)
     }
@@ -661,7 +687,7 @@ impl TabView {
             .and_then(Browser::snapshot)
             .map_or_else(ListingRevision::new, |snapshot| snapshot.revision().clone());
         self.selection.reset(revision, self.count());
-        self.list = ListState::uniform_count(self.count(), ROW);
+        self.list = ListState::uniform_count(self.lines(), self.line_height());
         self.selected = None;
         self.resize_reveal = None;
         self.discard_listing_input = true;
@@ -676,7 +702,7 @@ impl TabView {
             .cursor(&revision)
             .expect("current listing cursor");
         if reveal && let Some(index) = self.selected {
-            self.list.focus_item(index);
+            self.list.focus_item(index / self.cols());
         }
     }
     fn refresh(&mut self) -> bool {
@@ -764,10 +790,14 @@ impl TabView {
                     control,
                     shift: press.mods.shift,
                 };
-                let page = (self.viewport.height / ROW).floor().max(1.) as isize;
+                let cols = self.cols() as isize;
+                let page =
+                    (self.viewport.height / self.line_height()).floor().max(1.) as isize * cols;
                 let movement = match press.key {
-                    Key::Up => Some(Movement::Offset(-1)),
-                    Key::Down => Some(Movement::Offset(1)),
+                    Key::Up => Some(Movement::Offset(-cols)),
+                    Key::Down => Some(Movement::Offset(cols)),
+                    Key::Left if self.grid => Some(Movement::Offset(-1)),
+                    Key::Right if self.grid => Some(Movement::Offset(1)),
                     Key::Home => Some(Movement::First),
                     Key::End => Some(Movement::Last),
                     Key::PageUp => Some(Movement::Offset(-page)),
@@ -822,6 +852,9 @@ impl TabView {
                 && let Some(path) = self.location()
             {
                 jobs.places.toggle_bookmark(&path);
+            }
+            if (press.mods.ctrl || press.mods.cmd) && matches!(press.key, Key::Char('g' | 'G')) {
+                self.toggle_grid();
             }
             if (press.mods.ctrl || press.mods.cmd) && matches!(press.key, Key::Char('h' | 'H')) {
                 self.toggle_hidden();
@@ -1190,7 +1223,9 @@ impl TabView {
                 .gap(8)
                 .pad(14),
             );
-            if let Some(view) = self.preview.view(self.inspector_width) {
+            let preview = self.preview.view(self.inspector_width);
+            let has_preview = preview.is_some();
+            if let Some(view) = preview {
                 fields.push(hairline());
                 fields.push(view);
             }
@@ -1204,6 +1239,8 @@ impl TabView {
                     .is_some_and(|entry| entry.kind == EntryKind::File && zip_path(&entry.path))
                 {
                     "Press Enter or double-click to browse this ZIP."
+                } else if has_preview {
+                    ""
                 } else {
                     "Special files have no preview."
                 })
@@ -1409,7 +1446,8 @@ impl TabView {
             .take()
             .filter(|index| *index < self.count())
         {
-            self.list.scroll_to_item(index, ScrollTo::Nearest);
+            self.list
+                .scroll_to_item(index / self.cols(), ScrollTo::Nearest);
         }
         if !leaving_subview && !discard_listing_input {
             self.shortcut(ui, jobs);
@@ -1641,12 +1679,21 @@ impl TabView {
             .fill(chrome())
             .w(pct(100))
             .shrink(0);
-        if self.list.len() != self.count() {
+        if self.grid {
+            let cols = ((self.viewport.width - 8.) / TILE_W).floor().max(1.) as usize;
+            if cols != self.grid_cols {
+                self.grid_cols = cols;
+                self.list = ListState::uniform_count(self.lines(), self.line_height());
+            }
+        }
+        if self.list.len() != self.lines() {
             self.reset_listing();
         }
         let list_id = self.list_id();
         let fixture = self.fixture_count;
         let entries = self.browser.as_ref().map(|b| b.entries());
+        let (grid, cols, count) = (self.grid, self.cols(), self.count());
+        let thumbs = &mut self.thumbs;
         let revision = self.selection.revision().clone();
         let selection = &mut self.selection;
         let discard_listing_input = discard_listing_input || self.discard_listing_input;
@@ -1663,6 +1710,105 @@ impl TabView {
                 ..ListOptions::new(self.viewport.width.max(1.), self.viewport.height.max(1.))
             },
             |ui, item| {
+                if grid {
+                    let first = item.index * cols;
+                    let mut tiles = Vec::new();
+                    for index in first..(first + cols).min(count) {
+                        let info = if fixture.is_some() {
+                            fixture_row(index)
+                        } else {
+                            let e = &entries.expect("live browser entries")[index];
+                            RowInfo {
+                                name: e.name.to_string_lossy().into_owned(),
+                                path: e.path.to_string_lossy().into_owned(),
+                                kind: e.kind,
+                                size: e.size,
+                                modified: e.modified,
+                            }
+                        };
+                        let tile_id = format!("{}/tile/{index}", item.id);
+                        let interaction = ui.get(&tile_id);
+                        if !discard_listing_input
+                            && interaction.pressed
+                            && matches!(
+                                interaction.button,
+                                Some(Button::Primary | Button::Secondary)
+                            )
+                        {
+                            let mods = interaction.press_mods;
+                            let secondary = interaction.button == Some(Button::Secondary);
+                            if !secondary || !selection.contains(&revision, index).unwrap_or(false)
+                            {
+                                selection
+                                    .apply(
+                                        &revision,
+                                        SelectAction::Click {
+                                            index,
+                                            modifiers: SelectMods {
+                                                control: !secondary && (mods.ctrl || mods.cmd),
+                                                shift: !secondary && mods.shift,
+                                            },
+                                        },
+                                    )
+                                    .expect("visible tile belongs to current listing");
+                                pending_selection = Some(index);
+                            }
+                            context_request |= secondary;
+                        }
+                        if !discard_listing_input && interaction.double_clicked {
+                            pending_activation = Some(index);
+                        }
+                        let active = selection
+                            .contains(&revision, index)
+                            .expect("visible tile belongs to current listing");
+                        let thumb = (fixture.is_none()
+                            && info.kind == EntryKind::File
+                            && thumbs::is_image(FsPath::new(&info.path)))
+                        .then(|| thumbs.get(FsPath::new(&info.path)))
+                        .flatten();
+                        tiles.push(
+                            col([
+                                match thumb {
+                                    Some(img) => {
+                                        col([]).w(52).h(40).fill(Fill::Image(img, Fit::Contain))
+                                    }
+                                    None => entry_glyph(
+                                        info.kind == EntryKind::Directory,
+                                        active,
+                                        color(0xb9c9cf),
+                                    )
+                                    .square(36),
+                                },
+                                label(info.name.clone())
+                                    .when(active, |e| e.fill(selected_ink()))
+                                    .wrap()
+                                    .lines(2)
+                                    .w(pct(100))
+                                    .align_self(Align::Center)
+                                    .clip(),
+                            ])
+                            .gap(6)
+                            .pad((4, 8))
+                            .align(Align::Center)
+                            .w(TILE_W - 8.)
+                            .h(TILE_H - 8.)
+                            .radius(4)
+                            .fill(if active {
+                                selected()
+                            } else if interaction.hovered {
+                                color(0x293235)
+                            } else {
+                                ground()
+                            })
+                            .id(tile_id)
+                            .focusable()
+                            .tip(info.name.clone())
+                            .named(info.name)
+                            .clip(),
+                        );
+                    }
+                    return row(tiles).gap(8).pad((4, 4)).h(TILE_H).w(pct(100));
+                }
                 let info = if fixture.is_some() {
                     fixture_row(item.index)
                 } else {
@@ -1855,15 +2001,19 @@ impl TabView {
             .id("file-list"),
             _ => list,
         };
-        let files = col([header, hairline(), list])
-            .grow(1)
-            .basis(0)
-            .min_w(0)
-            .min_h(0)
-            .h(pct(100))
-            .fill(ground())
-            .clip()
-            .id("files-pane");
+        let files = col(if self.grid {
+            vec![list]
+        } else {
+            vec![header, hairline(), list]
+        })
+        .grow(1)
+        .basis(0)
+        .min_w(0)
+        .min_h(0)
+        .h(pct(100))
+        .fill(ground())
+        .clip()
+        .id("files-pane");
         let mut panes = Vec::new();
         if show_rail {
             panes.push(self.rail(ui, &jobs.places));
@@ -1987,6 +2137,7 @@ impl TabView {
         let mut changed = std::mem::take(&mut self.geometry_changed);
         changed |= self.refresh();
         changed |= self.preview.poll();
+        changed |= self.grid && self.thumbs.poll();
         if let Some(find) = &mut self.find {
             changed |= find.poll();
         }
