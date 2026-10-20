@@ -30,6 +30,22 @@ pub struct Entry {
     /// Unknown until a dedicated metadata request is implemented. Enumeration
     /// deliberately avoids a stat for every file merely to populate a column.
     pub size: Option<u64>,
+    pub modified: Option<std::time::SystemTime>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SortKey {
+    #[default]
+    Name,
+    Size,
+    Modified,
+    Kind,
+}
+/// Folders always sort before other entries; `descending` reverses only within each group.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SortOrder {
+    pub key: SortKey,
+    pub descending: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,6 +65,7 @@ pub enum LoadState {
 
 struct Request {
     generation: u64,
+    sort: SortOrder,
     path: PathBuf,
     filter: String,
     location_revision: u64,
@@ -92,6 +109,7 @@ pub struct Browser {
     snapshot: Option<ListingSnapshot>,
     state: LoadState,
     filter: String,
+    sort: SortOrder,
     history: Vec<PathBuf>,
     history_index: usize,
     location_revision: u64,
@@ -120,6 +138,7 @@ impl Browser {
             snapshot: None,
             state: LoadState::Loading,
             filter: String::new(),
+            sort: SortOrder::default(),
             history_index: 0,
             location_revision: 0,
             shared,
@@ -190,6 +209,15 @@ impl Browser {
         &self.state
     }
 
+    pub fn sort(&self) -> SortOrder {
+        self.sort
+    }
+    pub fn set_sort(&mut self, sort: SortOrder) {
+        if self.sort != sort {
+            self.sort = sort;
+            self.submit();
+        }
+    }
     pub fn set_filter(&mut self, filter: &str) {
         if self.filter != filter {
             self.filter.clear();
@@ -242,6 +270,7 @@ impl Browser {
         self.state = LoadState::Loading;
         let request = Request {
             generation,
+            sort: self.sort,
             path: self.path.clone(),
             filter: self.filter.clone(),
             location_revision: self.location_revision,
@@ -278,9 +307,19 @@ struct Record {
 }
 
 struct Cache {
+    sort: SortOrder,
     path: PathBuf,
     location_revision: u64,
     records: Vec<Record>,
+}
+
+fn stale_meta(request: &Request) -> Cache {
+    Cache {
+        sort: request.sort,
+        path: request.path.clone(),
+        location_revision: request.location_revision,
+        records: Vec::new(),
+    }
 }
 
 fn worker_loop(shared: Arc<Shared>) {
@@ -358,6 +397,24 @@ fn worker_loop_leased(shared: Arc<Shared>, mut listings: Vec<Arc<ListingData>>) 
         if shared.obsolete(request.generation) {
             continue;
         }
+        if let Some(stale) = cache
+            .take_if(|c| c.path == request.path && c.location_revision == request.location_revision)
+        {
+            cache = if stale.sort == request.sort {
+                Some(stale)
+            } else {
+                sort_cancellable(stale.records, request.sort, request.generation, &shared).map(
+                    |records| Cache {
+                        sort: request.sort,
+                        records,
+                        ..stale_meta(&request)
+                    },
+                )
+            };
+            if cache.is_none() {
+                continue;
+            }
+        }
         let result = if cache.as_ref().is_some_and(|cache| {
             cache.path == request.path && cache.location_revision == request.location_revision
         }) {
@@ -366,6 +423,7 @@ fn worker_loop_leased(shared: Arc<Shared>, mut listings: Vec<Arc<ListingData>>) 
             match enumerate(&request, &shared) {
                 Ok(Some(records)) => {
                     cache = Some(Cache {
+                        sort: request.sort,
                         path: request.path.clone(),
                         location_revision: request.location_revision,
                         records,
@@ -415,6 +473,7 @@ fn enumerate(request: &Request, shared: &Shared) -> Result<Option<Vec<Record>>, 
             .file_type()
             .map_err(|error| format!("Read type of {}: {error}", entry.path().display()))?;
         let name = entry.file_name();
+        let meta = entry.metadata().ok();
         let folded_name = name.to_string_lossy().to_lowercase();
         records.push(Record {
             entry: Entry {
@@ -429,24 +488,73 @@ fn enumerate(request: &Request, shared: &Shared) -> Result<Option<Vec<Record>>, 
                 } else {
                     EntryKind::Other
                 },
-                size: None,
+                size: meta.as_ref().filter(|m| !m.is_dir()).map(fs::Metadata::len),
+                modified: meta.and_then(|m| m.modified().ok()),
             },
             folded_name,
         });
     }
-    Ok(sort_cancellable(records, request.generation, shared))
+    Ok(sort_cancellable(
+        records,
+        request.sort,
+        request.generation,
+        shared,
+    ))
 }
 
-fn compare(a: &Record, b: &Record) -> Ordering {
+fn kind_rank(entry: &Entry) -> u8 {
+    match entry.kind {
+        EntryKind::Directory => 0,
+        EntryKind::File => 1,
+        EntryKind::Symlink => 2,
+        EntryKind::Other => 3,
+    }
+}
+fn extension(record: &Record) -> &str {
+    record
+        .folded_name
+        .rsplit_once('.')
+        .filter(|(stem, _)| !stem.is_empty())
+        .map_or("", |(_, ext)| ext)
+}
+fn compare(order: SortOrder, a: &Record, b: &Record) -> Ordering {
+    let by_name = |a: &Record, b: &Record| {
+        a.folded_name
+            .cmp(&b.folded_name)
+            .then_with(|| a.entry.name.cmp(&b.entry.name))
+    };
+    let keyed = match order.key {
+        SortKey::Name => Ordering::Equal,
+        SortKey::Size => a.entry.size.cmp(&b.entry.size),
+        SortKey::Modified => a.entry.modified.cmp(&b.entry.modified),
+        SortKey::Kind => kind_rank(&a.entry)
+            .cmp(&kind_rank(&b.entry))
+            .then_with(|| extension(a).cmp(extension(b))),
+    };
+    let keyed = if order.descending {
+        keyed.reverse()
+    } else {
+        keyed
+    };
+    let by_name_dir = if order.key == SortKey::Name && order.descending {
+        by_name(a, b).reverse()
+    } else {
+        by_name(a, b)
+    };
     (a.entry.kind != EntryKind::Directory)
         .cmp(&(b.entry.kind != EntryKind::Directory))
-        .then_with(|| a.folded_name.cmp(&b.folded_name))
-        .then_with(|| a.entry.name.cmp(&b.entry.name))
+        .then(keyed)
+        .then(by_name_dir)
 }
 
 /// Sort small chunks, then merge them with cancellation checkpoints. Unlike an
 /// interrupted comparator, each comparison remains a consistent total order.
-fn sort_cancellable(records: Vec<Record>, generation: u64, shared: &Shared) -> Option<Vec<Record>> {
+fn sort_cancellable(
+    records: Vec<Record>,
+    order: SortOrder,
+    generation: u64,
+    shared: &Shared,
+) -> Option<Vec<Record>> {
     const CHUNK: usize = 1024;
     let mut chunks = VecDeque::new();
     let mut records = records.into_iter();
@@ -458,7 +566,7 @@ fn sort_cancellable(records: Vec<Record>, generation: u64, shared: &Shared) -> O
         if chunk.is_empty() {
             break;
         }
-        chunk.sort_unstable_by(compare);
+        chunk.sort_unstable_by(|a, b| compare(order, a, b));
         chunks.push_back(chunk);
     }
     // Merge adjacent pairs in rounds so an uneven final chunk cannot alter the
@@ -479,7 +587,7 @@ fn sort_cancellable(records: Vec<Record>, generation: u64, shared: &Shared) -> O
                     return None;
                 }
                 let take_a = match (a.peek(), b.peek()) {
-                    (Some(a), Some(b)) => compare(a, b) != Ordering::Greater,
+                    (Some(a), Some(b)) => compare(order, a, b) != Ordering::Greater,
                     (Some(_), None) => true,
                     _ => false,
                 };
@@ -697,17 +805,63 @@ mod tests {
                 name: OsString::from(name),
                 kind,
                 size: None,
+                modified: None,
             },
             folded_name: name.to_lowercase(),
         })
         .collect();
-        entries.sort_by(compare);
+        entries.sort_by(|a, b| compare(SortOrder::default(), a, b));
         let names: Vec<_> = entries
             .iter()
             .map(|record| record.entry.name.to_string_lossy())
             .collect();
         assert_eq!(names, ["b-dir", "z-dir", "A", "a", "B"]);
-        assert!(entries.iter().all(|record| record.entry.size.is_none()));
+    }
+
+    #[test]
+    fn size_and_modified_are_listed_and_resorted_without_changing_folder_grouping() {
+        let fixture = Fixture::new();
+        fs::create_dir(fixture.0.join("dir")).unwrap();
+        fs::write(fixture.0.join("small"), b"1").unwrap();
+        fs::write(fixture.0.join("big"), b"123456").unwrap();
+        fs::write(fixture.0.join("mid.txt"), b"123").unwrap();
+        let mut browser = Browser::new(fixture.0.clone());
+        wait(&mut browser);
+        let names = |b: &Browser| -> Vec<String> {
+            b.entries()
+                .iter()
+                .map(|e| e.name.to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(names(&browser), ["dir", "big", "mid.txt", "small"]);
+        let big = &browser.entries()[1];
+        assert_eq!(big.size, Some(6));
+        assert!(big.modified.is_some());
+        assert_eq!(browser.entries()[0].size, None, "directories have no size");
+        browser.set_sort(SortOrder {
+            key: SortKey::Size,
+            descending: true,
+        });
+        wait(&mut browser);
+        assert_eq!(names(&browser), ["dir", "big", "mid.txt", "small"]);
+        browser.set_sort(SortOrder {
+            key: SortKey::Size,
+            descending: false,
+        });
+        wait(&mut browser);
+        assert_eq!(names(&browser), ["dir", "small", "mid.txt", "big"]);
+        browser.set_sort(SortOrder {
+            key: SortKey::Name,
+            descending: true,
+        });
+        wait(&mut browser);
+        assert_eq!(names(&browser), ["dir", "small", "mid.txt", "big"]);
+        browser.set_sort(SortOrder {
+            key: SortKey::Kind,
+            descending: false,
+        });
+        wait(&mut browser);
+        assert_eq!(names(&browser), ["dir", "big", "small", "mid.txt"]);
     }
 
     #[cfg(unix)]
@@ -756,14 +910,16 @@ mod tests {
             location_revision: 0,
             path: PathBuf::new(),
             filter: String::new(),
+            sort: SortOrder::default(),
         };
-        assert!(sort_cancellable(Vec::new(), 1, &shared).is_none());
+        assert!(sort_cancellable(Vec::new(), SortOrder::default(), 1, &shared).is_none());
         let record = Record {
             entry: Entry {
                 path: PathBuf::from("a"),
                 name: OsString::from("a"),
                 kind: EntryKind::File,
                 size: None,
+                modified: None,
             },
             folded_name: "a".into(),
         };
