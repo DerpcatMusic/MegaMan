@@ -13,6 +13,7 @@ browser-search.workspace = true
 mui.workspace = true
 epaint_default_fonts.workspace = true
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+qfind-core = { git = "https://github.com/DerpcatMusic/qfind", rev = "c06bed8", version = "0.5.0" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 browser-native.workspace = true
