@@ -15,8 +15,53 @@ pub(super) struct Volume {
     pub name: String,
     pub path: PathBuf,
 }
+/// A mounted filesystem with its capacity, for the home page cards.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Drive {
+    pub name: String,
+    pub path: PathBuf,
+    pub total: u64,
+    pub free: u64,
+}
+/// Parse `df -PB1 --output=target,size,avail`; keeps "/" and user mounts.
+pub(super) fn parse_df(text: &str) -> Vec<Drive> {
+    let mut drives = Vec::new();
+    for line in text.lines().skip(1) {
+        let mut f = line.rsplitn(3, ' ').filter(|s| !s.is_empty());
+        let (Some(free), Some(total), Some(target)) = (f.next(), f.next(), f.next()) else {
+            continue;
+        };
+        let (Ok(free), Ok(total)) = (free.parse(), total.parse()) else {
+            continue;
+        };
+        let target = target.trim();
+        let user = ["/media/", "/run/media/", "/mnt/"]
+            .iter()
+            .any(|p| target.starts_with(p));
+        if total > 0 && (target == "/" || user) {
+            let name = if target == "/" {
+                "System".into()
+            } else {
+                place_name(target)
+            };
+            drives.push(Drive {
+                name,
+                path: PathBuf::from(target),
+                total,
+                free,
+            });
+        }
+    }
+    drives
+}
+fn place_name(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map_or_else(|| path.into(), |n| n.to_string_lossy().into_owned())
+}
 #[derive(Default)]
 pub(super) struct Places {
+    drives: Arc<Mutex<Vec<Drive>>>,
     pub bookmarks: Vec<PathBuf>,
     pub recent: Vec<PathBuf>,
     volumes: Arc<Mutex<Vec<Volume>>>,
@@ -147,6 +192,7 @@ impl Places {
             bookmarks,
             recent,
             volumes: Arc::default(),
+            drives: Arc::default(),
             file,
         };
         places.refresh_volumes();
@@ -155,7 +201,21 @@ impl Places {
     pub(super) fn volumes(&self) -> Vec<Volume> {
         self.volumes.lock().map(|v| v.clone()).unwrap_or_default()
     }
+    pub(super) fn drives(&self) -> Vec<Drive> {
+        self.drives.lock().map(|v| v.clone()).unwrap_or_default()
+    }
     pub(super) fn refresh_volumes(&self) {
+        let usage = Arc::clone(&self.drives);
+        std::thread::spawn(move || {
+            let out = std::process::Command::new("df")
+                .args(["-PB1", "--output=target,size,avail"])
+                .output();
+            if let Ok(out) = out
+                && let Ok(mut d) = usage.lock()
+            {
+                *d = parse_df(&String::from_utf8_lossy(&out.stdout));
+            }
+        });
         let slot = Arc::clone(&self.volumes);
         std::thread::spawn(move || {
             if let Ok(text) = std::fs::read_to_string("/proc/self/mountinfo") {
@@ -231,6 +291,15 @@ mod tests {
             ["Windows11", "My Disk"]
         );
         assert_eq!(v[1].path, PathBuf::from("/run/media/u/My Disk"));
+    }
+    #[test]
+    fn df_keeps_root_and_user_mounts_with_spaces() {
+        let text =
+            "Mounted on 1B-blocks Avail\n/ 1000 400\n/run/media/u/My Disk 500 100\n/boot 9 9\n";
+        let d = parse_df(text);
+        assert_eq!(d.len(), 2);
+        assert_eq!((d[0].name.as_str(), d[0].free), ("System", 400));
+        assert_eq!(d[1].name, "My Disk");
     }
     #[test]
     fn visit_moves_to_front_and_bounds_the_list() {
