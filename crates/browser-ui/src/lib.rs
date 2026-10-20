@@ -52,23 +52,33 @@ fn color(hex: u32) -> Color {
         (hex & 255) as f32 / 255.0,
     )
 }
+/// Colour themes: 0 dark (default), 1 midnight, 2 light. Cycled by the palette, persisted in settings.
+static THEME: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+const THEMES: u8 = 3;
+fn theme_pick(dark: u32, midnight: u32, light: u32) -> Color {
+    color(match THEME.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => midnight,
+        2 => light,
+        _ => dark,
+    })
+}
 fn ground() -> Color {
-    color(0x14181a)
+    theme_pick(0x14181a, 0x0f1219, 0xf6f7f8)
 }
 fn chrome() -> Color {
-    color(0x1b2023)
+    theme_pick(0x1b2023, 0x161a24, 0xe9ecee)
 }
 fn line() -> Color {
-    color(0x262d30)
+    theme_pick(0x262d30, 0x252b3b, 0xd2d7da)
 }
 fn ink() -> Color {
-    color(0xe4e8e8)
+    theme_pick(0xe4e8e8, 0xe3e7f2, 0x1d2427)
 }
 fn muted() -> Color {
-    color(0xa4afb2)
+    theme_pick(0xa4afb2, 0x9aa3bd, 0x5d686c)
 }
 fn selected() -> Color {
-    color(0x087d99)
+    theme_pick(0x087d99, 0x4f6bd8, 0x0a86a6)
 }
 fn selected_ink() -> Color {
     color(0xffffff)
@@ -589,6 +599,10 @@ impl TabView {
             #[cfg(not(target_os = "linux"))]
             Cmd::Copy | Cmd::Paste => {}
             Cmd::SelectAll => self.apply_selection(SelectAction::SelectAll, false),
+            Cmd::NextTheme => {
+                let next = (THEME.load(std::sync::atomic::Ordering::Relaxed) + 1) % THEMES;
+                THEME.store(next, std::sync::atomic::Ordering::Relaxed);
+            }
             Cmd::HomePage => self.home_page = true,
             Cmd::ToggleHidden => self.toggle_hidden(),
             Cmd::SortName => self.sort_by(SortKey::Name),
@@ -675,6 +689,7 @@ impl TabView {
         if self.fixture_count.is_some() {
             return;
         }
+        THEME.store(settings.theme, std::sync::atomic::Ordering::Relaxed);
         self.show_inspector = settings.inspector;
         self.grid = settings.grid;
         if let Some(b) = self.browser.as_mut() {
@@ -689,6 +704,7 @@ impl TabView {
             sort: b.sort(),
             inspector: self.show_inspector,
             grid: self.grid,
+            theme: THEME.load(std::sync::atomic::Ordering::Relaxed),
         })
     }
     fn toggle_hidden(&mut self) {

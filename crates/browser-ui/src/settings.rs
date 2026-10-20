@@ -7,6 +7,7 @@ pub(super) struct Settings {
     pub sort: SortOrder,
     pub inspector: bool,
     pub grid: bool,
+    pub theme: u8,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -15,6 +16,7 @@ impl Default for Settings {
             sort: SortOrder::default(),
             inspector: false,
             grid: false,
+            theme: 0,
         }
     }
 }
@@ -37,6 +39,7 @@ impl Settings {
                 ("show_hidden", v) => s.show_hidden = v != "false",
                 ("inspector", v) => s.inspector = v != "false",
                 ("grid", v) => s.grid = v == "true",
+                ("theme", v) => s.theme = v.parse().unwrap_or(0).min(THEMES - 1),
                 ("sort_desc", v) => s.sort.descending = v == "true",
                 ("sort", "size") => s.sort.key = SortKey::Size,
                 ("sort", "modified") => s.sort.key = SortKey::Modified,
@@ -49,10 +52,11 @@ impl Settings {
     }
     pub(super) fn serialize(&self) -> String {
         format!(
-            "show_hidden={}\ninspector={}\ngrid={}\nsort={}\nsort_desc={}\n",
+            "show_hidden={}\ninspector={}\ngrid={}\ntheme={}\nsort={}\nsort_desc={}\n",
             self.show_hidden,
             self.inspector,
             self.grid,
+            self.theme,
             key_name(self.sort.key),
             self.sort.descending
         )
@@ -103,6 +107,7 @@ mod tests {
             },
             inspector: false,
             grid: true,
+            theme: 2,
         };
         assert_eq!(Settings::parse(&s.serialize()), s);
         assert_eq!(Settings::parse("junk\nunknown=1\n"), Settings::default());
