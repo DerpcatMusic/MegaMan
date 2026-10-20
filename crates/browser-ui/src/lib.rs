@@ -829,6 +829,25 @@ impl TabView {
                 modified: e.modified,
             })
     }
+    /// The last few folders on the way to the current one: (index, label, path).
+    fn crumbs(&self) -> Vec<(usize, String, PathBuf)> {
+        let Some(path) = self.browser.as_ref().map(|b| b.path().to_path_buf()) else {
+            return Vec::new();
+        };
+        let mut all: Vec<_> = path.ancestors().map(FsPath::to_path_buf).collect();
+        all.reverse();
+        let skip = all.len().saturating_sub(6);
+        all.into_iter()
+            .enumerate()
+            .skip(skip)
+            .map(|(i, p)| {
+                let name = p
+                    .file_name()
+                    .map_or("/".into(), |n| n.to_string_lossy().into_owned());
+                (i, name, p)
+            })
+            .collect()
+    }
     fn activate(&mut self, index: usize) {
         let entry = self
             .browser
@@ -1618,6 +1637,13 @@ impl TabView {
         if clicked(ui, "nav-up") {
             self.up();
         }
+        if let Some(target) = self
+            .crumbs()
+            .into_iter()
+            .find_map(|(i, _, p)| clicked(ui, &format!("crumb/{i}")).then_some(p))
+        {
+            self.navigate(target);
+        }
         #[cfg(target_os = "linux")]
         if clicked(ui, &self.copy_files_id()) {
             self.copy_selected_files(jobs);
@@ -1749,6 +1775,31 @@ impl TabView {
             .align(Align::Center)
             .fill(chrome())
             .w(pct(100));
+        let crumbs = row(self
+            .crumbs()
+            .into_iter()
+            .enumerate()
+            .flat_map(|(n, (i, name, p))| {
+                let button = action(
+                    ui,
+                    &format!("crumb/{i}"),
+                    &p.to_string_lossy(),
+                    text(name).text_size(12).fill(muted()),
+                    real,
+                    false,
+                );
+                if n == 0 {
+                    vec![button]
+                } else {
+                    vec![detail("›"), button]
+                }
+            }))
+        .gap(2)
+        .pad((6, 0))
+        .align(Align::Center)
+        .fill(chrome())
+        .w(pct(100))
+        .clip();
         let tab_name = if self.fixture_count.is_some() {
             "Performance fixture".into()
         } else {
@@ -2226,6 +2277,7 @@ impl TabView {
             tabs,
             hairline(),
             toolbar,
+            crumbs,
             hairline(),
             panes,
             hairline(),
