@@ -9,6 +9,8 @@ use std::path::PathBuf;
 
 struct Options {
     path: PathBuf,
+    /// Further locations, each opened in its own tab after the first.
+    more: Vec<PathBuf>,
     fixture: Option<usize>,
     snapshot: Option<PathBuf>,
     size: (u32, u32),
@@ -32,6 +34,7 @@ fn parse_size(value: &str) -> Result<(u32, u32), String> {
 fn parse() -> Result<Option<Options>, String> {
     let mut options = Options {
         path: std::env::current_dir().map_err(|e| e.to_string())?,
+        more: Vec::new(),
         fixture: None,
         snapshot: None,
         size: (1200, 800),
@@ -43,7 +46,7 @@ fn parse() -> Result<Option<Options>, String> {
         match arg.to_str() {
             Some("--help" | "-h") => {
                 println!(
-                    "megaman [PATH] [--fixture COUNT] [--size WIDTHxHEIGHT] [--profile CSV]\n\nNative file browser. Linux X11 Ctrl+C/Ctrl+V copies files with bounded verified operations. Ctrl+Shift+F opens Find Anywhere with an explicit folder scope.\n--fixture uses labeled synthetic entries; --snapshot PNG requires --fixture and uses the CPU path.\nExperimental build; desktop integrations and additional file operations are in development."
+                    "megaman [PATH...] [--fixture COUNT] [--size WIDTHxHEIGHT] [--profile CSV]\n\nNative file browser. Each PATH opens in its own tab. Linux X11 Ctrl+C/Ctrl+V copies files with bounded verified operations. Ctrl+Shift+F opens Find Anywhere with an explicit folder scope.\n--fixture uses labeled synthetic entries; --snapshot PNG requires --fixture and uses the CPU path.\nExperimental build; desktop integrations and additional file operations are in development."
                 );
                 return Ok(None);
             }
@@ -70,22 +73,24 @@ fn parse() -> Result<Option<Options>, String> {
                     parse_size(value(&mut args, "--size")?.to_str().ok_or("invalid size")?)?
             }
             Some("--") => {
-                if path_seen {
-                    return Err("only one location may be opened".into());
-                }
-                options.path = value(&mut args, "--")?.into();
-                if args.next().is_some() {
-                    return Err("only one location may be opened".into());
+                for arg in args.by_ref() {
+                    if path_seen {
+                        options.more.push(arg.into());
+                    } else {
+                        options.path = arg.into();
+                        path_seen = true;
+                    }
                 }
                 break;
             }
             Some(flag) if flag.starts_with('-') => return Err(format!("unknown option: {flag}")),
             _ => {
                 if path_seen {
-                    return Err("only one location may be opened".into());
+                    options.more.push(arg.into());
+                } else {
+                    options.path = arg.into();
+                    path_seen = true;
                 }
-                options.path = arg.into();
-                path_seen = true;
             }
         }
     }
@@ -94,10 +99,11 @@ fn parse() -> Result<Option<Options>, String> {
             "--snapshot requires --fixture COUNT for reproducible synthetic evidence".into(),
         );
     }
-    if options.path.is_relative() {
-        options.path = std::env::current_dir()
-            .map_err(|error| error.to_string())?
-            .join(options.path);
+    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+    for path in std::iter::once(&mut options.path).chain(options.more.iter_mut()) {
+        if path.is_relative() {
+            *path = cwd.join(&*path);
+        }
     }
     Ok(Some(options))
 }
@@ -166,7 +172,13 @@ fn run() -> Result<(), String> {
         return Ok(());
     };
     let mut view = options.fixture.map_or_else(
-        || BrowserView::new(options.path.clone()),
+        || {
+            let mut view = BrowserView::new(options.path.clone());
+            for path in &options.more {
+                view.open_tab(path.clone());
+            }
+            view
+        },
         BrowserView::fixture,
     );
     if let Some(path) = &options.snapshot {
