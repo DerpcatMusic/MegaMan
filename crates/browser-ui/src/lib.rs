@@ -1329,6 +1329,7 @@ impl TabView {
                 .radius(6),
             );
         }
+        let drives = places.drives();
         let sections: [(&str, &str, PlaceItems); 3] = [
             (
                 "bookmark",
@@ -1369,6 +1370,29 @@ impl TabView {
                     self.navigate(path.clone());
                 }
                 let current = self.browser.as_ref().is_some_and(|b| b.path() == path);
+                let usage = drives.iter().find(|d| d.path == path).map(|d| {
+                    let used = (d.total - d.free.min(d.total)) * 100 / d.total.max(1);
+                    col([
+                        row([
+                            block(0, 3)
+                                .w(pct(used as f32))
+                                .radius(2)
+                                .fill(if used >= 90 {
+                                    color(0xd9534f)
+                                } else {
+                                    selected()
+                                }),
+                            spacer(),
+                        ])
+                        .w(pct(100))
+                        .radius(2)
+                        .fill(ground()),
+                        detail(format!("{} free", bytes(d.free))),
+                    ])
+                    .gap(3)
+                });
+                let mut text = vec![label(name).lines(1).min_w(0).clip()];
+                text.extend(usage);
                 children.push(
                     action(
                         ui,
@@ -1376,7 +1400,7 @@ impl TabView {
                         &format!("Open {}", path.display()),
                         row([
                             glyph(Glyph::Folder, color(0xe2bd55)),
-                            label(name).grow(1).min_w(0).lines(1).clip(),
+                            col(text).gap(3).grow(1).min_w(0),
                         ])
                         .gap(8)
                         .pad((10, 6)),
