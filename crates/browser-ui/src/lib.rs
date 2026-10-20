@@ -14,6 +14,7 @@ use std::sync::OnceLock;
 mod dirsize;
 mod fileops;
 mod goto;
+mod home;
 mod jobs;
 mod palette;
 mod places;
@@ -417,6 +418,7 @@ struct TabView {
     reload_at: Option<std::time::Instant>,
     context_requested: bool,
     view_requested: bool,
+    home_page: bool,
 }
 
 impl TabView {
@@ -508,6 +510,7 @@ impl TabView {
             reload_at: None,
             context_requested: false,
             view_requested: false,
+            home_page: false,
         }
     }
     #[cfg(target_os = "linux")]
@@ -582,6 +585,7 @@ impl TabView {
             #[cfg(not(target_os = "linux"))]
             Cmd::Copy | Cmd::Paste => {}
             Cmd::SelectAll => self.apply_selection(SelectAction::SelectAll, false),
+            Cmd::HomePage => self.home_page = true,
             Cmd::ToggleHidden => self.toggle_hidden(),
             Cmd::SortName => self.sort_by(SortKey::Name),
             Cmd::SortType => self.sort_by(SortKey::Kind),
@@ -833,6 +837,7 @@ impl TabView {
     }
     fn navigate(&mut self, path: PathBuf) {
         self.reveal_path = None;
+        self.home_page = false;
         if let Some(browser) = self.browser.as_mut() {
             browser.navigate(path);
             self.path_text = browser.path().to_string_lossy().into_owned();
@@ -1243,6 +1248,26 @@ impl TabView {
             ),
         ];
         let mut children = vec![detail("Quick access").pad((10, 8))];
+        if clicked(ui, "bookmark-homepage") {
+            self.home_page = true;
+        }
+        children.push(
+            action(
+                ui,
+                "bookmark-homepage",
+                "Show home page",
+                row([
+                    glyph(Glyph::Home, muted()),
+                    label("Home page").grow(1).min_w(0),
+                ])
+                .gap(8)
+                .pad((10, 6)),
+                true,
+                self.home_page,
+            )
+            .w(pct(100))
+            .pad(0),
+        );
         for (key, name, path, icon) in bookmarks {
             let id = format!("bookmark-{key}");
             if self.fixture_count.is_none() && clicked(ui, &id) {
@@ -2344,6 +2369,15 @@ impl TabView {
         .fill(ground())
         .clip()
         .id(self.pid("files-pane"));
+        let files = if self.home_page {
+            let (page, open) = self.home_page(ui, &jobs.places);
+            if let Some(path) = open {
+                self.navigate(path);
+            }
+            page
+        } else {
+            files
+        };
         let mut panes = Vec::new();
         if show_rail {
             panes.push(self.rail(ui, &jobs.places));
@@ -2977,6 +3011,29 @@ mod multiselection_tests {
             scene.surface("path-input").is_none(),
             "editor only while editing"
         );
+    }
+
+    #[test]
+    fn home_page_cards_stay_inside_the_window_and_open_a_folder() {
+        let fixture = Fixture::new();
+        let mut h = Harness {
+            view: BrowserView::new(fixture.0.clone()),
+            ui: make_ui().unwrap(),
+            size: Size::new(1024., 720.),
+        };
+        complete(&mut h);
+        h.view.tab_mut().home_page = true;
+        h.settle();
+        let scene = h.ui.scene().unwrap();
+        let root = scene.surface("browser-root").unwrap().frame;
+        let card = scene.surface("home-user-home").unwrap().frame;
+        assert!(card.x >= root.x && card.right() <= root.right());
+        h.click_point(
+            Point::new(card.x + 20., card.y + card.size.height / 2.),
+            Mods::default(),
+        );
+        h.settle();
+        assert!(!h.view.tab().home_page);
     }
 
     #[test]
