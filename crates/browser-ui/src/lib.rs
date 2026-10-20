@@ -542,6 +542,10 @@ impl TabView {
                 let snap = snapshot();
                 jobs.fileops.trash_selection(snap, &self.selection);
             }
+            Cmd::Compress => {
+                let snap = snapshot();
+                jobs.fileops.compress_selection(snap, &self.selection);
+            }
             Cmd::Undo => jobs.fileops.undo_last(),
             Cmd::Cut => {
                 let snap = snapshot();
