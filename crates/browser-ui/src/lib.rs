@@ -13,6 +13,7 @@ use std::sync::OnceLock;
 
 mod fileops;
 mod jobs;
+mod places;
 use jobs::AppJobs;
 mod tabs;
 pub use tabs::BrowserView;
@@ -728,6 +729,13 @@ impl TabView {
                     self.activate(index);
                 }
             }
+            if (press.mods.ctrl || press.mods.cmd)
+                && matches!(press.key, Key::Char('d' | 'D'))
+                && self.fixture_count.is_none()
+                && let Some(path) = self.location()
+            {
+                jobs.places.toggle_bookmark(&path);
+            }
             if (press.mods.ctrl || press.mods.cmd) && press.key == Key::Char('l') {
                 ui.focus("path-input");
             }
@@ -917,7 +925,7 @@ impl TabView {
             self.window.height
         )
     }
-    fn rail(&mut self, ui: &mut Ui) -> El {
+    fn rail(&mut self, ui: &mut Ui, places: &places::Places) -> El {
         let bookmarks = [
             ("home", "Home", self.home.clone(), Glyph::Home),
             (
@@ -972,6 +980,65 @@ impl TabView {
                 .pad(0),
             );
         }
+        let sections: [(&str, &str, PlaceItems); 3] = [
+            (
+                "bookmark",
+                "Bookmarks · Ctrl+D",
+                places
+                    .bookmarks
+                    .iter()
+                    .map(|p| (place_name(p), p.clone()))
+                    .collect(),
+            ),
+            (
+                "volume",
+                "Volumes",
+                places
+                    .volumes()
+                    .into_iter()
+                    .map(|v| (v.name, v.path))
+                    .collect(),
+            ),
+            (
+                "recent",
+                "Recent",
+                places
+                    .recent
+                    .iter()
+                    .map(|p| (place_name(p), p.clone()))
+                    .collect(),
+            ),
+        ];
+        for (kind, title, items) in sections {
+            if items.is_empty() {
+                continue;
+            }
+            children.push(detail(title).pad((10, 8)));
+            for (index, (name, path)) in items.into_iter().enumerate() {
+                let id = format!("place-{kind}-{index}");
+                if self.fixture_count.is_none() && clicked(ui, &id) {
+                    self.navigate(path.clone());
+                }
+                let current = self.browser.as_ref().is_some_and(|b| b.path() == path);
+                children.push(
+                    action(
+                        ui,
+                        &id,
+                        &format!("Open {}", path.display()),
+                        row([
+                            glyph(Glyph::Folder, color(0xe2bd55)),
+                            label(name).grow(1).min_w(0).lines(1).clip(),
+                        ])
+                        .gap(8)
+                        .pad((10, 6)),
+                        self.fixture_count.is_none(),
+                        current,
+                    )
+                    .w(pct(100))
+                    .pad(0),
+                );
+            }
+        }
         children.push(spacer());
         children.push(detail("File browser").pad((10, 8)));
         col(children)
@@ -980,6 +1047,7 @@ impl TabView {
             .h(pct(100))
             .fill(chrome())
             .clip()
+            .scroll()
             .id("places")
     }
     fn inspector(&self, ui: &Ui) -> El {
@@ -1149,6 +1217,13 @@ fn date(time: std::time::SystemTime) -> String {
         "{year:04}-{month:02}-{day:02} {:02}:{:02}",
         rem / 3600,
         rem % 3600 / 60
+    )
+}
+type PlaceItems = Vec<(String, PathBuf)>;
+fn place_name(path: &FsPath) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
     )
 }
 fn bytes(size: u64) -> String {
@@ -1656,7 +1731,7 @@ impl TabView {
             .id("files-pane");
         let mut panes = Vec::new();
         if show_rail {
-            panes.push(self.rail(ui));
+            panes.push(self.rail(ui, &jobs.places));
             panes.push(divider("rail-divider", "Resize places"));
         }
         panes.push(files);

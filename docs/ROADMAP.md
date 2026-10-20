@@ -3,7 +3,7 @@
 MegaMan is being built in verified increments. Existing functionality is experimental; this list is a work breakdown, not a promise of completed platform support or release dates.
 
 - Tabs exist (Ctrl+T new, Ctrl+W close, Ctrl+Shift+T reopen, Ctrl+Tab cycle, click to switch); drag reordering, pinning and closed-tab history beyond location remain.
-- Add resizable split panels, saved workspaces, bookmarks, recents and volume navigation.
+- Bookmarks (Ctrl+D), recent folders and mounted volumes appear in the places rail. Add resizable split panels and saved workspaces.
 - Complete native inbound/outbound drag/drop, Wayland clipboard/data-device support and platform context actions.
 - Extend safe operations: cut (Ctrl+X) + paste moves on one filesystem; rename (F2), create (Ctrl+N / Ctrl+Shift+N), trash (Delete) and undo (Ctrl+Z) exist; move, cross-filesystem move, per-volume trash, conflict decisions and recovery remain.
 - Add previews, thumbnails, inspectors and file-opening integrations on bounded workers.

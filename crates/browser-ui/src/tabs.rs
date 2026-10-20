@@ -16,14 +16,20 @@ impl BrowserView {
             .unwrap_or_else(|_| unreachable!("empty workspace admits first tab"));
         Self {
             workspace,
-            jobs: AppJobs::default(),
+            jobs: AppJobs {
+                places: places::Places::load(),
+                ..AppJobs::default()
+            },
         }
     }
     pub fn new(path: PathBuf) -> Self {
         Self::with_tab(TabView::new(path))
     }
     pub fn fixture(count: usize) -> Self {
-        Self::with_tab(TabView::fixture(count))
+        let mut view = Self::with_tab(TabView::fixture(count));
+        // Synthetic fixtures must not depend on this machine's places.
+        view.jobs.places = places::Places::default();
+        view
     }
     fn active_tab(&self) -> Option<&TabView> {
         self.workspace
@@ -299,6 +305,19 @@ impl View for BrowserView {
     }
     fn changed(&mut self) -> bool {
         let mut changed = self.poll_jobs();
+        if let Some(tab) = self
+            .workspace
+            .active()
+            .and_then(|id| self.workspace.get(id).ok())
+            .filter(|t| {
+                t.browser
+                    .as_ref()
+                    .is_some_and(|b| matches!(b.state(), LoadState::Complete))
+            })
+            && let Some(path) = tab.location()
+        {
+            self.jobs.places.visit(&path);
+        }
         let ids: Vec<_> = self.workspace.tabs().map(|(id, _)| id).collect();
         for id in ids {
             changed |= self

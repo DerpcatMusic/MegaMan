@@ -451,8 +451,10 @@ mod tests {
         std::fs::write(dir.join("a"), b"1").unwrap();
         std::fs::write(dir.join("b"), b"2").unwrap();
         std::fs::write(dir.join("dest/b"), b"keep").unwrap();
-        let mut ops = FileOps::default();
-        ops.cut = Some(vec![dir.join("a"), dir.join("b")]);
+        let mut ops = FileOps {
+            cut: Some(vec![dir.join("a"), dir.join("b")]),
+            ..FileOps::default()
+        };
         assert!(
             !ops.take_cut_matching(&[dir.join("a")]),
             "partial match is a copy"
