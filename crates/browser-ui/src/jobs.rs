@@ -12,6 +12,7 @@ pub(super) struct AppJobs {
     pub(super) copy_transfers: Option<transfers::TransfersUi>,
     pub(super) fileops: fileops::FileOps,
     pub(super) places: places::Places,
+    pub(super) settings: settings::Settings,
     pub(super) copy_return_pending: bool,
     pub(super) geometry_changed: bool,
     // The built tree and the source of current host input are deliberately
