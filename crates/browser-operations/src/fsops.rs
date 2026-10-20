@@ -110,7 +110,11 @@ pub fn rename(path: &Path, new_name: &OsStr) -> Result<Undo> {
 /// Move into another directory on the same filesystem; cross-device is reported, not emulated.
 pub fn move_into(src: &Path, dest_dir: &Path) -> Result<Undo> {
     let (_, name) = parent_and_name(src)?;
-    let to = dest_dir.join(name);
+    let to = if src.parent() == Some(dest_dir) {
+        dest_dir.join(name) // same folder: stay a no-replace error, never a silent copy-rename
+    } else {
+        unique_in(dest_dir, name)
+    };
     if to.starts_with(src) {
         return Err(err(
             ErrorKind::Containment,
@@ -124,6 +128,23 @@ pub fn move_into(src: &Path, dest_dir: &Path) -> Result<Undo> {
         from: to,
         to: src.to_path_buf(),
     })
+}
+/// `dir/name`, or "stem (2).ext", "stem (3).ext"… when something already lives there (keep both).
+pub fn unique_in(dir: &Path, name: &OsStr) -> PathBuf {
+    let first = dir.join(name);
+    if first.symlink_metadata().is_err() {
+        return first;
+    }
+    let path = Path::new(name);
+    let stem = path.file_stem().unwrap_or(name).to_string_lossy();
+    let ext = path
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    (2u32..)
+        .map(|n| dir.join(format!("{stem} ({n}){ext}")))
+        .find(|p| p.symlink_metadata().is_err())
+        .unwrap()
 }
 fn no_replace(from: &Path, to: &Path, phase: &'static str) -> Result<()> {
     fs::renameat_with(CWD, from, CWD, to, RenameFlags::NOREPLACE).map_err(|e| io(phase, to, e))
@@ -392,5 +413,16 @@ mod tests {
         undo(&t1).unwrap();
         assert_eq!(std::fs::read(d.join("f")).unwrap(), b"1");
         std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    fn unique_names_keep_extensions_and_skip_taken_slots() {
+        let d = std::env::temp_dir().join(format!("fsops-unique-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        assert_eq!(unique_in(&d, OsStr::new("a.txt")), d.join("a.txt"));
+        std::fs::write(d.join("a.txt"), b"").unwrap();
+        std::fs::write(d.join("a (2).txt"), b"").unwrap();
+        assert_eq!(unique_in(&d, OsStr::new("a.txt")), d.join("a (3).txt"));
+        std::fs::remove_dir_all(&d).unwrap();
     }
 }

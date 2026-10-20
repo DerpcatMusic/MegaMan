@@ -118,7 +118,7 @@ fn move_across(path: &FsPath, dest_dir: &FsPath) -> Result<(), String> {
     let cancel = Cancellation::default();
     let plan = browser_operations::plan_copy_new_with_options(
         path.to_path_buf(),
-        dest_dir.join(name),
+        fsops::unique_in(dest_dir, name),
         limits,
         options,
         &cancel,
@@ -681,7 +681,7 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
-    fn matching_cut_moves_without_replacing_and_undo_returns_the_files() {
+    fn matching_cut_moves_keeping_both_on_conflict_and_undo_returns_the_files() {
         let dir = std::env::temp_dir().join(format!("fileops-move-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("dest")).unwrap();
@@ -702,10 +702,15 @@ mod tests {
         settle(&mut ops);
         assert!(dir.join("dest/a").exists() && !dir.join("a").exists());
         assert_eq!(std::fs::read(dir.join("dest/b")).unwrap(), b"keep");
-        assert!(dir.join("b").exists(), "conflicting source stays put");
+        assert_eq!(std::fs::read(dir.join("dest/b (2)")).unwrap(), b"2");
+        assert!(
+            !dir.join("b").exists(),
+            "conflict keeps both, never replaces"
+        );
         ops.undo_last();
         settle(&mut ops);
         assert!(dir.join("a").exists() && !dir.join("dest/a").exists());
+        assert!(dir.join("b").exists() && !dir.join("dest/b (2)").exists());
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
