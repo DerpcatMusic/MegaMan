@@ -404,6 +404,8 @@ struct TabView {
     reveal_path: Option<PathBuf>,
     preview: preview::Preview,
     thumbs: thumbs::Thumbs,
+    watch: Option<(PathBuf, browser_core::watch::DirWatch)>,
+    reload_at: Option<std::time::Instant>,
     context_requested: bool,
 }
 
@@ -484,6 +486,8 @@ impl TabView {
             reveal_path: None,
             preview: preview::Preview::default(),
             thumbs: thumbs::Thumbs::default(),
+            watch: None,
+            reload_at: None,
             context_requested: false,
         }
     }
@@ -592,6 +596,41 @@ impl TabView {
             }
             Cmd::NewTab | Cmd::CloseTab | Cmd::ReopenTab | Cmd::NextTab | Cmd::PrevTab => {}
         }
+    }
+    /// Keep an inotify watch on the listed folder; re-list shortly after external changes.
+    fn poll_watch(&mut self) -> bool {
+        const SETTLE: std::time::Duration = std::time::Duration::from_millis(300);
+        let Some(browser) = self
+            .browser
+            .as_ref()
+            .filter(|_| self.fixture_count.is_none())
+        else {
+            return false;
+        };
+        if !matches!(browser.state(), LoadState::Complete) {
+            return false;
+        }
+        let path = browser.path().to_path_buf();
+        if self.watch.as_ref().is_none_or(|(p, _)| *p != path) {
+            self.watch = browser_core::watch::DirWatch::new(&path)
+                .ok()
+                .map(|w| (path.clone(), w));
+            self.reload_at = None;
+        }
+        if self.watch.as_ref().is_some_and(|(_, w)| w.changed()) && self.reload_at.is_none() {
+            self.reload_at = Some(std::time::Instant::now() + SETTLE);
+        }
+        if self
+            .reload_at
+            .is_some_and(|at| std::time::Instant::now() >= at)
+        {
+            self.reload_at = None;
+            if let Some(b) = self.browser.as_mut() {
+                b.navigate(path);
+            }
+            return true;
+        }
+        false
     }
     fn apply_settings(&mut self, settings: &settings::Settings) {
         if self.fixture_count.is_some() {
@@ -2189,6 +2228,7 @@ impl TabView {
         let mut changed = std::mem::take(&mut self.geometry_changed);
         changed |= self.refresh();
         changed |= self.preview.poll();
+        changed |= self.poll_watch();
         changed |= self.grid && self.thumbs.poll();
         if let Some(find) = &mut self.find {
             changed |= find.poll();
