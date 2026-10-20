@@ -16,6 +16,7 @@ mod jobs;
 mod palette;
 mod places;
 mod preview;
+mod settings;
 use jobs::AppJobs;
 mod tabs;
 pub use tabs::BrowserView;
@@ -565,6 +566,24 @@ impl TabView {
             Cmd::ToggleInspector => self.show_inspector = !self.show_inspector,
             Cmd::NewTab | Cmd::CloseTab | Cmd::ReopenTab | Cmd::NextTab | Cmd::PrevTab => {}
         }
+    }
+    fn apply_settings(&mut self, settings: &settings::Settings) {
+        if self.fixture_count.is_some() {
+            return;
+        }
+        self.show_inspector = settings.inspector;
+        if let Some(b) = self.browser.as_mut() {
+            b.set_show_hidden(settings.show_hidden);
+            b.set_sort(settings.sort);
+        }
+    }
+    fn current_settings(&self) -> Option<settings::Settings> {
+        let b = self.browser.as_ref()?;
+        Some(settings::Settings {
+            show_hidden: b.show_hidden(),
+            sort: b.sort(),
+            inspector: self.show_inspector,
+        })
     }
     fn toggle_hidden(&mut self) {
         if let Some(b) = self.browser.as_mut() {

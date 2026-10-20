@@ -9,9 +9,11 @@ pub struct BrowserView {
 }
 
 impl BrowserView {
-    fn with_tab(tab: TabView) -> Self {
+    fn with_tab(mut tab: TabView) -> Self {
         let mut workspace =
             Workspace::new(Limits::default()).expect("valid default workspace limits");
+        let settings = settings::Settings::load();
+        tab.apply_settings(&settings);
         workspace
             .create(tab, Activation::Foreground)
             .unwrap_or_else(|_| unreachable!("empty workspace admits first tab"));
@@ -20,6 +22,7 @@ impl BrowserView {
             palette: None,
             jobs: AppJobs {
                 places: places::Places::load(),
+                settings,
                 ..AppJobs::default()
             },
         }
@@ -201,9 +204,9 @@ impl BrowserView {
                     .and_then(TabView::location)
                     .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
                     .unwrap_or_else(|| PathBuf::from("/"));
-                self.workspace
-                    .create(TabView::new(location), Activation::Foreground)
-                    .is_ok()
+                let mut tab = TabView::new(location);
+                tab.apply_settings(&self.jobs.settings);
+                self.workspace.create(tab, Activation::Foreground).is_ok()
             }
             TabIntent::Reopen => {
                 let Some(closed) = self.workspace.recently_closed().next_back() else {
@@ -358,6 +361,17 @@ impl View for BrowserView {
     }
     fn changed(&mut self) -> bool {
         let mut changed = self.poll_jobs();
+        if let Some(now) = self
+            .workspace
+            .active()
+            .and_then(|id| self.workspace.get(id).ok())
+            .filter(|t| t.fixture_count.is_none())
+            .and_then(TabView::current_settings)
+            && now != self.jobs.settings
+        {
+            self.jobs.settings = now;
+            now.save();
+        }
         if let Some(tab) = self
             .workspace
             .active()
