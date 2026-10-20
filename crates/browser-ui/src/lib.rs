@@ -21,6 +21,7 @@ mod places;
 mod preview;
 mod settings;
 mod thumbs;
+mod views;
 use jobs::AppJobs;
 mod tabs;
 pub use tabs::BrowserView;
@@ -429,6 +430,8 @@ struct TabView {
     evidence_focus_role: &'static str,
     resize_reveal: Option<usize>,
     grid: bool,
+    /// Folder whose saved view was last applied or recorded.
+    view_path: Option<PathBuf>,
     grid_cols: usize,
     find: Option<FindPanel>,
     archive: Option<ArchivePanel>,
@@ -521,6 +524,7 @@ impl TabView {
             evidence_focus_role: "none",
             resize_reveal: None,
             grid: false,
+            view_path: None,
             grid_cols: 1,
             find: None,
             archive: None,
@@ -734,6 +738,7 @@ impl TabView {
             },
         });
         self.reset_listing();
+        self.remember_view();
     }
     fn open_rename(&mut self, jobs: &mut AppJobs) {
         if jobs.mutations_busy() {
@@ -793,6 +798,41 @@ impl TabView {
     fn toggle_grid(&mut self) {
         self.grid = !self.grid;
         self.list = ListState::uniform_count(self.lines(), self.line_height());
+        self.remember_view();
+    }
+    /// Save this folder's layout and sort so it reopens the same way.
+    fn remember_view(&mut self) {
+        if let Some(b) = self
+            .browser
+            .as_ref()
+            .filter(|_| self.fixture_count.is_none())
+        {
+            views::set(
+                b.path(),
+                views::View {
+                    grid: self.grid,
+                    sort: b.sort(),
+                },
+            );
+            self.view_path = Some(b.path().to_path_buf());
+        }
+    }
+    /// On entering a folder, restore its saved view; other folders keep the current one.
+    fn sync_view(&mut self) {
+        let Some(path) = self.browser.as_ref().map(|b| b.path().to_path_buf()) else {
+            return;
+        };
+        if self.view_path.as_ref() == Some(&path) || self.fixture_count.is_some() {
+            return;
+        }
+        self.view_path = Some(path.clone());
+        if let Some(v) = views::get(&path) {
+            self.grid = v.grid;
+            if let Some(b) = self.browser.as_mut() {
+                b.set_sort(v.sort);
+            }
+            self.reset_listing();
+        }
     }
     /// The second pane of a split: no tab strip, places rail, inspector, find, archives or job rows.
     fn secondary(&self) -> bool {
@@ -1671,6 +1711,7 @@ fn zip_path(path: &FsPath) -> bool {
 
 impl TabView {
     fn build(&mut self, ui: &mut Ui, jobs: &mut AppJobs, strip: Option<El>) -> El {
+        self.sync_view();
         if std::mem::take(&mut jobs.copy_return_pending) {
             self.discard_listing_input = true;
             if self.find.is_some() {
