@@ -777,14 +777,12 @@ mod tests {
         assert!(ops.start_move(vec![src.clone()], dest.clone()));
         settle(&mut ops);
         let result = std::fs::read(dest.join(src.file_name().unwrap()));
-        let _ = std::fs::remove_dir_all(
-            src.parent().unwrap().join(format!(
+        let _ = std::fs::remove_dir_all(src.parent().unwrap().join(format!(
                 ".Trash-{}",
                 std::fs::metadata("/proc/self")
                     .map(|m| std::os::unix::fs::MetadataExt::uid(&m))
                     .unwrap_or(0)
-            )),
-        );
+            )));
         std::fs::remove_dir_all(&dest).unwrap();
         assert_eq!(result.unwrap(), b"payload");
         assert!(!src.exists(), "original left its folder");
