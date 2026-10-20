@@ -46,6 +46,9 @@ pub(super) struct ExtractionUi {
     native_destination: PathBuf,
     destination_text: String,
     destination_edited: bool,
+    /// Typed password as chars; the field only ever shows bullets (see `mask_edit`).
+    password: Vec<char>,
+    password_shown: String,
     source: PathBuf,
     error: Option<String>,
     visible: bool,
@@ -55,6 +58,27 @@ pub(super) struct ExtractionUi {
     changed: bool,
     refresh_parent: Option<PathBuf>,
     window: Size,
+}
+/// The field shows only bullets. Fold one edit of that display back into the secret:
+/// typed chars are the non-bullets; removed bullets drop from where typing began (else the end).
+fn mask_edit(secret: &mut Vec<char>, shown: &mut String) {
+    const DOT: char = '\u{2022}';
+    let new: Vec<char> = shown.chars().collect();
+    let typed: Vec<(usize, char)> = new
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(_, c)| *c != DOT)
+        .collect();
+    let kept = (new.len() - typed.len()).min(secret.len());
+    let removed = secret.len() - kept;
+    let at = typed
+        .first()
+        .map_or(kept, |(i, _)| *i)
+        .min(secret.len() - removed);
+    secret.drain(at..at + removed);
+    secret.splice(at..at, typed.into_iter().map(|(_, c)| c));
+    *shown = DOT.to_string().repeat(secret.len());
 }
 impl ExtractionUi {
     /// No worker is spawned until an actual extraction action is requested.
@@ -72,6 +96,8 @@ impl ExtractionUi {
             native_destination: PathBuf::new(),
             destination_text: String::new(),
             destination_edited: false,
+            password: Vec::new(),
+            password_shown: String::new(),
             source: PathBuf::new(),
             error: None,
             visible: false,
@@ -143,6 +169,8 @@ impl ExtractionUi {
         self.destination_text = default_destination.to_string_lossy().into_owned();
         self.native_destination = default_destination;
         self.destination_edited = false;
+        self.password.clear();
+        self.password_shown.clear();
         self.error = None;
         self.cancel_requested = false;
         self.start_submitted = false;
@@ -267,8 +295,22 @@ impl ExtractionUi {
                 let Some(ticket) = self.ticket.take() else {
                     return false;
                 };
-                match jobs.start(ticket, destination, None) {
+                let secret: String = self.password.iter().collect();
+                let credential = (!secret.is_empty())
+                    .then(|| browser_archive::ExtractionCredential::new(secret.as_bytes()))
+                    .transpose();
+                let credential = match credential {
+                    Ok(credential) => credential,
+                    Err(_) => {
+                        self.ticket = Some(ticket);
+                        self.error = Some("The password is too long.".into());
+                        return false;
+                    }
+                };
+                match jobs.start(ticket, destination, credential) {
                     Ok(()) => {
+                        self.password.clear();
+                        self.password_shown.clear();
                         self.start_submitted = true;
                         self.error = None;
                         self.bump();
@@ -392,7 +434,7 @@ impl ExtractionUi {
             ExtractionOutcome::Failed(error) => {
                 let mut lines = Vec::new();
                 if error.kind == ErrorKind::CredentialRequired {
-                    lines.push("Password-protected entries need credentials. Password entry is unavailable in this view.".into());
+                    lines.push("Password-protected entries need a password. Reopen extraction and enter it.".into());
                 }
                 if error.published.is_some() {
                     lines.push("The destination was published before a later failure. Inspect it; cancellation did not roll it back.".into());
@@ -597,6 +639,25 @@ impl ExtractionUi {
                 .min_w(0)
                 .id("extraction-destination-box"),
             );
+            if was_ready {
+                body.push(detail("Password (only for encrypted archives)"));
+                let before = self.password_shown.clone();
+                let field = text_edit(
+                    ui,
+                    self.id("password"),
+                    &mut self.password_shown,
+                    TextOpts::default(),
+                );
+                if self.password_shown != before {
+                    mask_edit(&mut self.password, &mut self.password_shown);
+                }
+                body.push(
+                    col([field.el.w(pct(100)).min_w(0).named("Archive password")])
+                        .w(pct(100))
+                        .min_w(0)
+                        .id("extraction-password-box"),
+                );
+            }
             if !self.destination_edited && self.native_destination.to_str().is_none() {
                 body.push(
                     detail("Native filename bytes are preserved until you edit this field.")
@@ -637,7 +698,7 @@ impl ExtractionUi {
                 .id("extraction-source"),
         );
         if !terminal {
-            body.push(detail("Archive folder prefixes are preserved. Password entry is unavailable; encrypted selections cannot complete here.").wrap().min_w(0));
+            body.push(detail("Archive folder prefixes are preserved. Encrypted archives need the password above.").wrap().min_w(0));
         }
         if terminal && let Some(error) = &self.error {
             body.push(
@@ -717,7 +778,7 @@ impl ExtractionUi {
     }
     pub(super) fn evidence(&self) -> String {
         format!(
-            "{{\"schema_version\":1,\"mode\":\"extraction\",\"busy\":{},\"visible\":{},\"job_sequence\":{},\"control_epoch\":{},\"state\":\"{:?}\",\"cancel_requested\":{},\"destination_edited\":{},\"window_width\":{},\"window_height\":{},\"password_entry\":false}}",
+            "{{\"schema_version\":1,\"mode\":\"extraction\",\"busy\":{},\"visible\":{},\"job_sequence\":{},\"control_epoch\":{},\"state\":\"{:?}\",\"cancel_requested\":{},\"destination_edited\":{},\"window_width\":{},\"window_height\":{},\"password_entry\":true}}",
             self.busy(),
             self.visible,
             self.active.map_or(0, ExtractionJobId::sequence),
@@ -766,6 +827,22 @@ pub(super) fn capture_evidence(ui: &Ui, size: Size, name: &str) {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
+    #[test]
+    fn masked_edits_track_typing_deleting_and_replacing() {
+        let (mut secret, mut shown) = (Vec::new(), String::new());
+        for typed in ["a", "\u{2022}b", "\u{2022}\u{2022}c"] {
+            shown = typed.into();
+            mask_edit(&mut secret, &mut shown);
+        }
+        assert_eq!(secret.iter().collect::<String>(), "abc");
+        assert_eq!(shown, "\u{2022}\u{2022}\u{2022}");
+        shown = "\u{2022}\u{2022}".into();
+        mask_edit(&mut secret, &mut shown);
+        assert_eq!(secret.iter().collect::<String>(), "ab");
+        shown = "\u{2022}X\u{2022}".into(); // insert in the middle
+        mask_edit(&mut secret, &mut shown);
+        assert_eq!(secret.iter().collect::<String>(), "aXb");
+    }
     use super::*;
     use browser_archive::{
         BrowserCatalogState, BrowserOptions, Cancellation, Control, CreateOptions, CreateSource,
@@ -1483,7 +1560,7 @@ mod tests {
                 );
             }
             if kind == ErrorKind::CredentialRequired {
-                assert!(lines.contains("Password entry is unavailable"));
+                assert!(lines.contains("need a password"));
             }
             let mut ui = super::super::make_ui().unwrap();
             for size in [Size::new(640., 480.), Size::new(320., 240.)] {
