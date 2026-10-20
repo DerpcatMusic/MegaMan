@@ -714,6 +714,7 @@ impl TabView {
                 self.find = None;
                 self.archive = Some(ArchivePanel::new(path));
             }
+            Some((path, EntryKind::File)) => open_external(path),
             _ => {}
         }
     }
@@ -1287,6 +1288,20 @@ fn date(time: std::time::SystemTime) -> String {
     )
 }
 type PlaceItems = Vec<(String, PathBuf)>;
+/// Hand a file to the desktop's default handler. Detached; the worker only reaps the child.
+fn open_external(path: PathBuf) {
+    std::thread::spawn(move || {
+        if let Ok(mut child) = std::process::Command::new("xdg-open")
+            .arg(&path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            let _ = child.wait();
+        }
+    });
+}
 fn place_name(path: &FsPath) -> String {
     path.file_name().map_or_else(
         || path.display().to_string(),
