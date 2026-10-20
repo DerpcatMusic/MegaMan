@@ -378,6 +378,10 @@ pub fn make_ui() -> Result<Ui, String> {
 struct TabView {
     browser: Option<Browser>,
     fixture_count: Option<usize>,
+    /// Element-id prefix: "" for the main pane, "b/" for the second pane of a split.
+    pfx: &'static str,
+    /// Only the focused pane of a split reacts to the keyboard.
+    active_pane: bool,
     sizes: dirsize::DirSizes,
     /// Type-to-select buffer and when its last letter arrived.
     ahead: (String, Option<std::time::Instant>),
@@ -442,6 +446,8 @@ impl TabView {
     pub fn fixture(count: usize) -> Self {
         let mut result = Self {
             fixture_count: Some(count),
+            pfx: "",
+            active_pane: true,
             sizes: Default::default(),
             ahead: Default::default(),
             path_text: "/Synthetic / Performance fixture".into(),
@@ -463,6 +469,8 @@ impl TabView {
         Self {
             browser: None,
             fixture_count: None,
+            pfx: "",
+            active_pane: true,
             sizes: Default::default(),
             ahead: Default::default(),
             list: ListState::uniform_count(0, ROW),
@@ -501,7 +509,7 @@ impl TabView {
     }
     #[cfg(target_os = "linux")]
     fn copy_files_id(&self) -> String {
-        format!("copy-files/{}", self.listing_serial)
+        format!("{}copy-files/{}", self.pfx, self.listing_serial)
     }
     #[cfg(target_os = "linux")]
     fn copy_selected_files(&mut self, jobs: &mut AppJobs) {
@@ -512,7 +520,7 @@ impl TabView {
     }
     #[cfg(target_os = "linux")]
     fn paste_files_id(&self) -> String {
-        format!("paste-files/{}", self.listing_serial)
+        format!("{}paste-files/{}", self.pfx, self.listing_serial)
     }
     #[cfg(target_os = "linux")]
     fn paste_files(&mut self, jobs: &mut AppJobs) {
@@ -554,6 +562,7 @@ impl TabView {
                 let snap = snapshot();
                 jobs.fileops.compress_selection(snap, &self.selection);
             }
+            Cmd::ToggleSplit | Cmd::CopyToOther | Cmd::MoveToOther => {}
             Cmd::Undo => jobs.fileops.undo_last(),
             Cmd::Cut => {
                 let snap = snapshot();
@@ -751,8 +760,20 @@ impl TabView {
         self.grid = !self.grid;
         self.list = ListState::uniform_count(self.lines(), self.line_height());
     }
+    /// The second pane of a split: no tab strip, places rail, inspector, find, archives or job rows.
+    fn secondary(&self) -> bool {
+        !self.pfx.is_empty()
+    }
+    /// Send the selection to `dest` (the other pane's folder).
+    fn send_to(&mut self, jobs: &mut AppJobs, dest: PathBuf, mv: bool) {
+        let snap = self.browser.as_ref().and_then(Browser::snapshot);
+        jobs.fileops.send_selection(snap, &self.selection, dest, mv);
+    }
+    fn pid(&self, id: &str) -> String {
+        format!("{}{id}", self.pfx)
+    }
     fn list_id(&self) -> String {
-        format!("file-list/revision/{}", self.listing_serial)
+        format!("{}file-list/revision/{}", self.pfx, self.listing_serial)
     }
     fn reset_listing(&mut self) {
         // Reused index-shaped hit IDs must never dispatch a preceding listing's
@@ -861,7 +882,7 @@ impl TabView {
             .map(|e| (e.path.clone(), e.kind));
         match entry {
             Some((path, EntryKind::Directory)) => self.navigate(path),
-            Some((path, EntryKind::File)) if zip_path(&path) => {
+            Some((path, EntryKind::File)) if zip_path(&path) && !self.secondary() => {
                 self.find = None;
                 self.archive = Some(ArchivePanel::new(path));
             }
@@ -903,7 +924,7 @@ impl TabView {
         let mut keys = ui.shortcuts().to_vec();
         if ui.focus_is_text() {
             keys.extend(
-                ui.keys(ui.focus_key().unwrap_or("path-input"))
+                ui.keys(ui.focus_key().unwrap_or(&self.pid("path-input")))
                     .iter()
                     .filter(|p| {
                         (p.mods.ctrl || p.mods.cmd) && matches!(p.key, Key::Char('l' | 'f' | 'F'))
@@ -911,8 +932,13 @@ impl TabView {
                     .copied(),
             );
         }
-        let files_focused = ui.focus_key().is_none_or(|id| id.starts_with("file-list"));
-        if let Some(id) = ui.focus_key().filter(|id| id.starts_with("file-list")) {
+        let files_focused = ui
+            .focus_key()
+            .is_none_or(|id| id.starts_with(&self.pid("file-list")));
+        if let Some(id) = ui
+            .focus_key()
+            .filter(|id| id.starts_with(&self.pid("file-list")))
+        {
             for c in ui
                 .text(id)
                 .to_owned()
@@ -1001,7 +1027,7 @@ impl TabView {
                 self.toggle_hidden();
             }
             if (press.mods.ctrl || press.mods.cmd) && press.key == Key::Char('l') {
-                ui.focus("path-input");
+                ui.focus(self.pid("path-input"));
             }
             if (press.mods.ctrl || press.mods.cmd)
                 && matches!(press.key, Key::Char('f' | 'F'))
@@ -1010,13 +1036,13 @@ impl TabView {
                 if press.mods.shift {
                     self.open_find(ui);
                 } else {
-                    ui.focus("filter-input");
+                    ui.focus(self.pid("filter-input"));
                 }
             }
             if press.key == Key::Escape {
                 jobs.fileops.cancel_prompt();
                 self.apply_selection(SelectAction::Clear, false);
-                ui.focus("file-list");
+                ui.focus(self.pid("file-list"));
             }
             if files_focused
                 && self.inspector_fits()
@@ -1039,6 +1065,7 @@ impl TabView {
     }
     fn open_find(&mut self, ui: &mut Ui) {
         if self.fixture_count.is_none()
+            && !self.secondary()
             && let Some(browser) = &self.browser
         {
             self.find = Some(FindPanel::new(browser.path().to_path_buf()));
@@ -1061,13 +1088,14 @@ impl TabView {
                 }
             }
         }
-        ui.focus("file-list");
+        ui.focus(self.pid("file-list"));
         None
     }
     fn inspector_fits(&self) -> bool {
         let rail = self.show_rail && self.window.width >= RAIL_MIN + CONTENT_MIN + GAP;
-        self.window.width
-            >= CONTENT_MIN + INSPECTOR_MIN + GAP + if rail { self.rail_width + GAP } else { 0. }
+        !self.secondary()
+            && self.window.width
+                >= CONTENT_MIN + INSPECTOR_MIN + GAP + if rail { self.rail_width + GAP } else { 0. }
     }
     fn build_archive(&mut self, ui: &mut Ui, jobs: &mut AppJobs) -> Option<El> {
         let busy = jobs.mutations_busy();
@@ -1567,7 +1595,7 @@ impl TabView {
             } else if let Some(archive) = &mut self.archive {
                 archive.restore_focus();
             } else {
-                ui.focus("file-list");
+                ui.focus(self.pid("file-list"));
             }
         }
         let leaving_subview = self.find.is_some() || self.archive.is_some();
@@ -1580,7 +1608,7 @@ impl TabView {
         self.refresh();
         let preview_path = self
             .selected
-            .filter(|_| self.show_inspector && self.fixture_count.is_none())
+            .filter(|_| self.show_inspector && !self.secondary() && self.fixture_count.is_none())
             .and_then(|i| self.browser.as_ref()?.entries().get(i))
             .filter(|e| matches!(e.kind, EntryKind::File | EntryKind::Directory))
             .map(|e| e.path.clone());
@@ -1591,19 +1619,23 @@ impl TabView {
             ("sort-modified", SortKey::Modified),
             ("sort-size", SortKey::Size),
         ] {
-            if clicked(ui, id) {
+            if clicked(ui, &self.pid(id)) {
                 self.sort_by(key);
             }
         }
         let discard_listing_input = std::mem::take(&mut self.discard_listing_input);
-        if discard_listing_input && ui.focus_key().is_none_or(|id| id.starts_with("file-list")) {
-            ui.focus("file-list");
+        if discard_listing_input
+            && ui
+                .focus_key()
+                .is_none_or(|id| id.starts_with(&self.pid("file-list")))
+        {
+            ui.focus(self.pid("file-list"));
         }
         if let Some(scene) = ui.scene() {
-            if let Some(frame) = scene.surface("browser-root") {
+            if let Some(frame) = scene.surface(&self.pid("browser-root")) {
                 self.window = frame.frame.size;
             }
-            if let Some(frame) = scene.surface("file-list") {
+            if let Some(frame) = scene.surface(&self.pid("file-list")) {
                 let size = frame.frame.size;
                 if size.width > 0. && size.height > 0. {
                     self.viewport = size;
@@ -1618,7 +1650,7 @@ impl TabView {
             self.list
                 .scroll_to_item(index / self.cols(), ScrollTo::Nearest);
         }
-        if !leaving_subview && !discard_listing_input {
+        if !leaving_subview && !discard_listing_input && self.active_pane {
             self.shortcut(ui, jobs);
         }
         if let Some(tree) = self.build_find(ui) {
@@ -1627,25 +1659,25 @@ impl TabView {
         if let Some(tree) = self.build_archive(ui, jobs) {
             return jobs.with_mutation_status(ui, tree);
         }
-        if clicked(ui, "find-anywhere") {
+        if clicked(ui, &self.pid("find-anywhere")) {
             self.open_find(ui);
             if let Some(tree) = self.build_find(ui) {
                 return jobs.with_mutation_status(ui, tree);
             }
         }
-        if clicked(ui, "nav-back") {
+        if clicked(ui, &self.pid("nav-back")) {
             self.history(false);
         }
-        if clicked(ui, "nav-forward") {
+        if clicked(ui, &self.pid("nav-forward")) {
             self.history(true);
         }
-        if clicked(ui, "nav-up") {
+        if clicked(ui, &self.pid("nav-up")) {
             self.up();
         }
         if let Some(target) = self
             .crumbs()
             .into_iter()
-            .find_map(|(i, _, p)| clicked(ui, &format!("crumb/{i}")).then_some(p))
+            .find_map(|(i, _, p)| clicked(ui, &self.pid(&format!("crumb/{i}"))).then_some(p))
         {
             self.navigate(target);
         }
@@ -1679,7 +1711,7 @@ impl TabView {
             .is_some_and(|b| b.path().parent().is_some());
         let nav_back = action(
             ui,
-            "nav-back",
+            &self.pid("nav-back"),
             "Back · Alt+Left",
             glyph(Glyph::Back, muted()),
             can_back,
@@ -1687,7 +1719,7 @@ impl TabView {
         );
         let nav_forward = action(
             ui,
-            "nav-forward",
+            &self.pid("nav-forward"),
             "Forward · Alt+Right",
             glyph(Glyph::Forward, muted()),
             can_forward,
@@ -1695,13 +1727,15 @@ impl TabView {
         );
         let nav_up = action(
             ui,
-            "nav-up",
+            &self.pid("nav-up"),
             "Parent folder · Alt+Up",
             glyph(Glyph::Up, muted()),
             can_up,
             false,
         );
-        let show_rail = self.show_rail && self.window.width >= RAIL_MIN + CONTENT_MIN + GAP;
+        let show_rail = !self.secondary()
+            && self.show_rail
+            && self.window.width >= RAIL_MIN + CONTENT_MIN + GAP;
         let show_inspector = self.show_inspector && self.inspector_fits();
         let places = action(
             ui,
@@ -1723,7 +1757,12 @@ impl TabView {
             self.inspector_fits(),
             show_inspector,
         );
-        let path = text_edit(ui, "path-input", &mut self.path_text, TextOpts::default());
+        let path = text_edit(
+            ui,
+            self.pid("path-input"),
+            &mut self.path_text,
+            TextOpts::default(),
+        );
         if real && path.changed.submitted {
             let target = self
                 .browser
@@ -1742,7 +1781,7 @@ impl TabView {
                     }
                 });
             self.navigate(target);
-            ui.focus("file-list");
+            ui.focus(self.pid("file-list"));
         }
         let path = path
             .el
@@ -1755,13 +1794,17 @@ impl TabView {
             .fill(ground());
         let find_action = action(
             ui,
-            "find-anywhere",
+            &self.pid("find-anywhere"),
             "Find anywhere · Ctrl+Shift+F",
             glyph(Glyph::Search, muted()),
             real,
             false,
         );
-        let mut toolbar_items = vec![nav_back, nav_forward, nav_up, places, path];
+        let mut toolbar_items = vec![nav_back, nav_forward, nav_up];
+        if !self.secondary() {
+            toolbar_items.push(places);
+        }
+        toolbar_items.push(path);
         #[cfg(target_os = "linux")]
         if let Some(clipboard) = &jobs.file_clipboard {
             toolbar_items.push(action(
@@ -1773,13 +1816,16 @@ impl TabView {
                 false,
             ));
         }
-        toolbar_items.extend([find_action, inspector]);
+        if !self.secondary() {
+            toolbar_items.extend([find_action, inspector]);
+        }
         let toolbar = row(toolbar_items)
             .gap(3)
             .pad((6, 5))
             .align(Align::Center)
             .fill(chrome())
             .w(pct(100));
+        let pfx = self.pfx;
         let crumbs = row(self
             .crumbs()
             .into_iter()
@@ -1787,7 +1833,7 @@ impl TabView {
             .flat_map(|(n, (i, name, p))| {
                 let button = action(
                     ui,
-                    &format!("crumb/{i}"),
+                    &format!("{pfx}crumb/{i}"),
                     &p.to_string_lossy(),
                     text(name).text_size(12).fill(muted()),
                     real,
@@ -1849,27 +1895,32 @@ impl TabView {
                 .when(ui.get(id).hovered, |e| e.fill(color(0x293235)))
         };
         let mut head_cells = vec![
-            head(ui, SortKey::Name, "sort-name", "Name")
+            head(ui, SortKey::Name, &self.pid("sort-name"), "Name")
                 .grow(1)
                 .basis(0)
                 .min_w(0),
         ];
         if wide_columns {
             head_cells.push(
-                head(ui, SortKey::Kind, "sort-kind", "Type")
+                head(ui, SortKey::Kind, &self.pid("sort-kind"), "Type")
                     .reserve("Symbolic link")
                     .min_w(94),
             );
         }
         if modified_column {
             head_cells.push(
-                head(ui, SortKey::Modified, "sort-modified", "Modified")
-                    .reserve("0000-00-00 00:00")
-                    .min_w(118),
+                head(
+                    ui,
+                    SortKey::Modified,
+                    &self.pid("sort-modified"),
+                    "Modified",
+                )
+                .reserve("0000-00-00 00:00")
+                .min_w(118),
             );
         }
         head_cells.push(
-            head(ui, SortKey::Size, "sort-size", "Size")
+            head(ui, SortKey::Size, &self.pid("sort-size"), "Size")
                 .reserve("999.9 MB")
                 .min_w(78)
                 .align_self(Align::End),
@@ -2166,7 +2217,7 @@ impl TabView {
         // The collection's finite dimensions are visibility hints. Its actual box is
         // allocated by flex constraints, then read back for next-frame virtualization.
         let list = col([list.el.w(pct(100)).h(pct(100)).min_h(0).min_w(0)])
-            .id("file-list")
+            .id(self.pid("file-list"))
             .focusable()
             .w(pct(100))
             .h(ROW)
@@ -2188,7 +2239,7 @@ impl TabView {
             .basis(0)
             .min_h(0)
             .fill(ground())
-            .id("file-list"),
+            .id(self.pid("file-list")),
             Some(LoadState::Failed(error)) => col([
                 label("Could not open this folder").fill(color(0xffb4ab)),
                 detail(error.clone()).wrap(),
@@ -2200,7 +2251,7 @@ impl TabView {
             .basis(0)
             .min_h(0)
             .fill(ground())
-            .id("file-list"),
+            .id(self.pid("file-list")),
             _ if self.count() == 0 => col([
                 label(if self.filter.is_empty() {
                     "This folder is empty"
@@ -2220,7 +2271,7 @@ impl TabView {
             .basis(0)
             .min_h(0)
             .fill(ground())
-            .id("file-list"),
+            .id(self.pid("file-list")),
             _ => list,
         };
         let files = col(if self.grid {
@@ -2235,7 +2286,7 @@ impl TabView {
         .h(pct(100))
         .fill(ground())
         .clip()
-        .id("files-pane");
+        .id(self.pid("files-pane"));
         let mut panes = Vec::new();
         if show_rail {
             panes.push(self.rail(ui, &jobs.places));
@@ -2253,7 +2304,7 @@ impl TabView {
             .min_w(0)
             .w(pct(100))
             .clip();
-        let filter = text_input(ui, "filter-input", &mut self.filter);
+        let filter = text_input(ui, self.pid("filter-input"), &mut self.filter);
         if real && filter.changed {
             if let Some(b) = self.browser.as_mut() {
                 b.set_filter(&self.filter);
@@ -2299,16 +2350,22 @@ impl TabView {
         .align(Align::Center)
         .fill(chrome())
         .w(pct(100));
-        let mut regions = vec![
-            tabs,
-            hairline(),
-            toolbar,
-            crumbs,
-            hairline(),
-            panes,
-            hairline(),
-            status,
-        ];
+        let mut regions = if self.secondary() {
+            vec![toolbar]
+        } else {
+            vec![tabs, hairline(), toolbar]
+        };
+        regions.extend([crumbs, hairline(), panes, hairline(), status]);
+        if self.secondary() {
+            return col(regions)
+                .w(pct(100))
+                .h(pct(100))
+                .min_w(0)
+                .min_h(0)
+                .fill(ground())
+                .id(self.pid("browser-root"))
+                .named("Second file browser");
+        }
         if let Some(clipboard_status) = jobs.clipboard_status(ui) {
             regions.extend([hairline(), clipboard_status]);
         }
@@ -2352,7 +2409,7 @@ impl TabView {
             .min_w(0)
             .min_h(0)
             .fill(ground())
-            .id("browser-root")
+            .id(self.pid("browser-root"))
             .named("File browser");
         jobs.with_transfer_statuses(ui, tree)
     }
@@ -2373,9 +2430,9 @@ impl TabView {
     }
     fn after_frame(&mut self, ui: &mut Ui) {
         self.evidence_focus_role = match ui.focus_key() {
-            Some("path-input") => "location",
-            Some("filter-input") => "filter",
-            Some(id) if id.starts_with("file-list") => "list",
+            Some(id) if id == self.pid("path-input") => "location",
+            Some(id) if id == self.pid("filter-input") => "filter",
+            Some(id) if id.starts_with(&self.pid("file-list")) => "list",
             Some(_) => "other",
             None => "none",
         };
@@ -2388,11 +2445,11 @@ impl TabView {
             return;
         }
         if let Some(scene) = ui.scene() {
-            if let Some(frame) = scene.surface("browser-root") {
+            if let Some(frame) = scene.surface(&self.pid("browser-root")) {
                 self.geometry_changed |= self.window != frame.frame.size;
                 self.window = frame.frame.size;
             }
-            if let Some(frame) = scene.surface("file-list") {
+            if let Some(frame) = scene.surface(&self.pid("file-list")) {
                 let next = frame.frame.size;
                 if next.width > 0. && next.height > 0. {
                     if self.viewport != next {

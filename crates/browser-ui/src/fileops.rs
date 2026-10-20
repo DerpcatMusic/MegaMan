@@ -35,6 +35,8 @@ pub(super) struct FileOps {
     cutting: Option<Materialization>,
     renaming: Option<Materialization>,
     zipping: Option<Materialization>,
+    sending: Option<(Materialization, PathBuf, bool)>,
+    outbox: Option<(Vec<PathBuf>, PathBuf)>,
     cut: Option<Vec<PathBuf>>,
     running: Option<mpsc::Receiver<Done>>,
     undo: Vec<Vec<Undo>>,
@@ -393,6 +395,24 @@ impl FileOps {
             self.renaming = self.materialize(snapshot, selection, "rename");
         }
     }
+    /// Copy (or move) the selection into `dest`, the other pane's folder.
+    pub(super) fn send_selection(
+        &mut self,
+        snapshot: Option<browser_core::listing::ListingSnapshot>,
+        selection: &Selection,
+        dest: PathBuf,
+        mv: bool,
+    ) {
+        if !self.busy() {
+            self.sending = self
+                .materialize(snapshot, selection, if mv { "move" } else { "copy" })
+                .map(|work| (work, dest, mv));
+        }
+    }
+    /// A finished copy-to-other-pane request for the transfer worker to start.
+    pub(super) fn take_outbox(&mut self) -> Option<(Vec<PathBuf>, PathBuf)> {
+        self.outbox.take()
+    }
     /// Compress the selection into a new "<name>.zip" beside it (never replaces; undo removes it).
     pub(super) fn compress_selection(
         &mut self,
@@ -545,6 +565,22 @@ impl FileOps {
                 Err(error) => {
                     self.message = Some((format!("Cannot trash selection: {error:?}"), true));
                 }
+            }
+        }
+        if let Some((work, _, _)) = &mut self.sending
+            && let Some(result) = work.poll()
+        {
+            let (_, dest, mv) = self.sending.take().expect("polled send");
+            changed = true;
+            match result {
+                Ok(paths) if mv => {
+                    self.start_move(paths.into_paths(), dest);
+                }
+                Ok(paths) => {
+                    self.message = None;
+                    self.outbox = Some((paths.into_paths(), dest));
+                }
+                Err(error) => self.message = Some((format!("Cannot send: {error:?}"), true)),
             }
         }
         if let Some(work) = &mut self.zipping
