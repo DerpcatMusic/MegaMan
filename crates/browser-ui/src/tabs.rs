@@ -30,6 +30,12 @@ impl BrowserView {
     pub fn new(path: PathBuf) -> Self {
         Self::with_tab(TabView::new(path))
     }
+    /// Open `path` in a new background tab (used for extra launch arguments).
+    pub fn open_tab(&mut self, path: PathBuf) {
+        let mut tab = TabView::new(path);
+        tab.apply_settings(&self.jobs.settings);
+        let _ = self.workspace.create(tab, Activation::Background);
+    }
     pub fn fixture(count: usize) -> Self {
         let mut view = Self::with_tab(TabView::fixture(count));
         // Synthetic fixtures must not depend on this machine's places.
