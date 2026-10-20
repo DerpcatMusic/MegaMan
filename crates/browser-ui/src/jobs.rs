@@ -223,6 +223,10 @@ impl AppJobs {
         } else {
             tree
         };
+        self.with_transfer_statuses(ui, tree)
+    }
+    /// Main-view variant: the browser tree already embeds the clipboard status.
+    pub(super) fn with_transfer_statuses(&mut self, ui: &Ui, tree: El) -> El {
         let tree = self.with_copy_transfer_status(ui, tree);
         self.with_extraction_status(ui, tree)
     }

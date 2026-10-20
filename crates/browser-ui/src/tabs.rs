@@ -82,7 +82,7 @@ impl BrowserView {
             |tab| tab.evidence(&self.jobs),
         )
     }
-    fn poll_jobs(&mut self) -> bool {
+    pub(super) fn poll_jobs(&mut self) -> bool {
         let (mut changed, refresh) = self.jobs.poll();
         if refresh.iter().all(Option::is_none) {
             return changed;

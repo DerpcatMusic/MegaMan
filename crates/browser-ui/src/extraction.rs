@@ -1149,7 +1149,7 @@ mod tests {
         fs::create_dir(&other).unwrap();
         let mut view = BrowserView::new(fixture.0.clone());
         wait(|| {
-            view.tab().refresh();
+            view.tab_mut().refresh();
             matches!(
                 view.tab().browser.as_ref().unwrap().state(),
                 crate::LoadState::Complete
@@ -1212,7 +1212,7 @@ mod tests {
         ready(panel);
         view.tab_mut().navigate(other.clone());
         wait(|| {
-            view.tab().refresh();
+            view.tab_mut().refresh();
             matches!(
                 view.tab().browser.as_ref().unwrap().state(),
                 crate::LoadState::Complete

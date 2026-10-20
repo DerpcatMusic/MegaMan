@@ -1061,13 +1061,13 @@ impl TabView {
     fn build(&mut self, ui: &mut Ui, jobs: &mut AppJobs) -> El {
         if std::mem::take(&mut jobs.copy_return_pending) {
             self.discard_listing_input = true;
-            ui.focus(if self.find.is_some() {
-                "find-query"
-            } else if self.archive.is_some() {
-                "archive-close"
+            if self.find.is_some() {
+                ui.focus("find-query");
+            } else if let Some(archive) = &mut self.archive {
+                archive.restore_focus();
             } else {
-                "file-list"
-            });
+                ui.focus("file-list");
+            }
         }
         let leaving_subview = self.find.is_some() || self.archive.is_some();
         if let Some(tree) = self.build_find(ui) {
@@ -1566,6 +1566,9 @@ impl TabView {
             hairline(),
             status,
         ];
+        if let Some(clipboard_status) = jobs.clipboard_status(ui) {
+            regions.extend([hairline(), clipboard_status]);
+        }
         #[cfg(target_os = "linux")]
         if jobs.file_clipboard.is_some() && real {
             let enabled = !jobs.mutations_busy()
@@ -1605,7 +1608,7 @@ impl TabView {
             .fill(ground())
             .id("browser-root")
             .named("File browser");
-        jobs.with_mutation_status(ui, tree)
+        jobs.with_transfer_statuses(ui, tree)
     }
     fn changed(&mut self) -> bool {
         let mut changed = std::mem::take(&mut self.geometry_changed);
