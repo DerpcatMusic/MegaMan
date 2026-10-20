@@ -9,7 +9,7 @@ MegaMan is being built in verified increments. Existing functionality is experim
 - Text and image previews (bounded, worker-decoded) exist in the inspector. Add thumbnails, richer inspectors and file-opening integrations.
 - Extend archive workflows with password entry, creation, nested browsing, preview/drag staging, more formats and independent encryption interoperability tests.
 - The listed folder refreshes after external changes (inotify, 300 ms settle; the focused item stays selected). Add watcher convergence for archives, large-folder sorting/filtering, system-wide indexed finding and explicit incomplete-coverage feedback.
-- Sort columns (Name, Type, Modified, Size) and real sizes/dates exist. Add list/grid/tree views, grouping, disk usage and future column-based navigation.
+- Sort columns (Name, Type, Modified, Size) and real sizes/dates exist. Add list/grid/tree views, grouping, disk usage and future column-based navigation. Folder sizes are measured in the background (… while pending, "≥" when partial).
 - Copy path (Ctrl+Shift+C), open terminal here and GVfs network volumes exist. Command palette (Ctrl+P) and hidden-file toggle (Ctrl+H) exist. Expand settings, shortcuts, command search, persistence, accessibility, IME and multilingual testing.
 - Add network/device/cloud providers with explicit cancellation, capability and offline behavior.
 - Qualify Linux X11/Wayland, then Windows/macOS and ARM64 through native tests.
