@@ -51,13 +51,13 @@ fn color(hex: u32) -> Color {
     )
 }
 fn ground() -> Color {
-    color(0x191d1e)
+    color(0x14181a)
 }
 fn chrome() -> Color {
-    color(0x222728)
+    color(0x1b2023)
 }
 fn line() -> Color {
-    color(0x343b3e)
+    color(0x262d30)
 }
 fn ink() -> Color {
     color(0xe4e8e8)
@@ -484,7 +484,7 @@ impl TabView {
                 .or_else(|| std::env::var_os("USERPROFILE"))
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("/")),
-            show_rail: true,
+            show_rail: false,
             show_inspector: true,
             inspector_width: 250.,
             rail_width: 174.,
@@ -1674,6 +1674,12 @@ impl TabView {
         if clicked(ui, &self.pid("nav-up")) {
             self.up();
         }
+        if clicked(ui, &self.pid("path-click")) {
+            ui.focus(self.pid("path-input"));
+        }
+        if clicked(ui, &self.pid("menu")) {
+            self.context_requested = true;
+        }
         if let Some(target) = self
             .crumbs()
             .into_iter()
@@ -1757,41 +1763,94 @@ impl TabView {
             self.inspector_fits(),
             show_inspector,
         );
-        let path = text_edit(
-            ui,
-            self.pid("path-input"),
-            &mut self.path_text,
-            TextOpts::default(),
-        );
-        if real && path.changed.submitted {
-            let target = self
-                .browser
-                .as_ref()
-                .filter(|b| b.path().to_string_lossy() == self.path_text)
-                .map(|b| b.path().to_path_buf())
-                .unwrap_or_else(|| {
-                    let path = PathBuf::from(&self.path_text);
-                    if path.is_absolute() {
-                        path
-                    } else {
-                        self.browser
-                            .as_ref()
-                            .map(|b| b.path().join(&path))
-                            .unwrap_or(path)
-                    }
-                });
-            self.navigate(target);
-            ui.focus(self.pid("file-list"));
-        }
-        let path = path
-            .el
+        let pfx = self.pfx;
+        let crumb_count = self.crumbs().last().map_or(0, |c| c.0 + 1);
+        let crumbs = row(self
+            .crumbs()
+            .into_iter()
+            .enumerate()
+            .flat_map(|(n, (i, name, p))| {
+                let last = i + 1 == crumb_count;
+                let button = action(
+                    ui,
+                    &format!("{pfx}crumb/{i}"),
+                    &p.to_string_lossy(),
+                    text(name)
+                        .text_size(13)
+                        .fill(if last { ink() } else { muted() }),
+                    real,
+                    false,
+                )
+                .fill(ground());
+                if n == 0 {
+                    vec![button]
+                } else {
+                    vec![detail("›"), button]
+                }
+            }))
+        .gap(2)
+        .align(Align::Center)
+        .shrink(1)
+        .min_w(0)
+        .clip();
+        let editing = ui.focus_key().is_some_and(|k| k == self.pid("path-input"));
+        let path = if editing {
+            let path = text_edit(
+                ui,
+                self.pid("path-input"),
+                &mut self.path_text,
+                TextOpts::default(),
+            );
+            if real && path.changed.submitted {
+                let target = self
+                    .browser
+                    .as_ref()
+                    .filter(|b| b.path().to_string_lossy() == self.path_text)
+                    .map(|b| b.path().to_path_buf())
+                    .unwrap_or_else(|| {
+                        let path = PathBuf::from(&self.path_text);
+                        if path.is_absolute() {
+                            path
+                        } else {
+                            self.browser
+                                .as_ref()
+                                .map(|b| b.path().join(&path))
+                                .unwrap_or(path)
+                        }
+                    });
+                self.navigate(target);
+                ui.focus(self.pid("file-list"));
+            }
+            path.el
+                .grow(1)
+                .basis(0)
+                .min_w(0)
+                .clip()
+                .named("Location · Enter to navigate · Ctrl+L")
+                .fill(ground())
+        } else {
+            row([
+                crumbs,
+                col(Vec::<El>::new())
+                    .grow(1)
+                    .h(pct(100))
+                    .min_w(8)
+                    .id(self.pid("path-click"))
+                    .focusable()
+                    .cursor(Cursor::Text),
+            ])
             .grow(1)
             .basis(0)
             .min_w(0)
+            .h(28)
+            .pad((8, 0))
+            .align(Align::Center)
+            .radius(3)
             .clip()
-            .named("Location · Enter to navigate · Ctrl+L")
-            .when(!real, |e| e.disabled())
-            .fill(ground());
+            .named("Location · click to edit · Ctrl+L")
+            .fill(ground())
+        }
+        .when(!real, |e| e.disabled());
         let find_action = action(
             ui,
             &self.pid("find-anywhere"),
@@ -1819,38 +1878,25 @@ impl TabView {
         if !self.secondary() {
             toolbar_items.extend([find_action, inspector]);
         }
+        toolbar_items.push(action(
+            ui,
+            &self.pid("menu"),
+            "Commands · Ctrl+P",
+            col([
+                block(3, 3).radius(2).fill(muted()),
+                block(3, 3).radius(2).fill(muted()),
+                block(3, 3).radius(2).fill(muted()),
+            ])
+            .gap(2),
+            real,
+            false,
+        ));
         let toolbar = row(toolbar_items)
             .gap(3)
             .pad((6, 5))
             .align(Align::Center)
             .fill(chrome())
             .w(pct(100));
-        let pfx = self.pfx;
-        let crumbs = row(self
-            .crumbs()
-            .into_iter()
-            .enumerate()
-            .flat_map(|(n, (i, name, p))| {
-                let button = action(
-                    ui,
-                    &format!("{pfx}crumb/{i}"),
-                    &p.to_string_lossy(),
-                    text(name).text_size(12).fill(muted()),
-                    real,
-                    false,
-                );
-                if n == 0 {
-                    vec![button]
-                } else {
-                    vec![detail("›"), button]
-                }
-            }))
-        .gap(2)
-        .pad((6, 0))
-        .align(Align::Center)
-        .fill(chrome())
-        .w(pct(100))
-        .clip();
         let tab_name = if self.fixture_count.is_some() {
             "Performance fixture".into()
         } else {
@@ -2188,9 +2234,6 @@ impl TabView {
                     } else {
                         ground()
                     })
-                    .when(ui.focus_visible(&item.id), |e| {
-                        e.stroke(cursor_stroke(active)).stroke_width(1)
-                    })
                     .tip(info.name.clone())
                     .named(info.name)
                     .clip()
@@ -2323,27 +2366,44 @@ impl TabView {
             } else {
                 "Filtering is disabled for the synthetic rendering fixture"
             });
-        let status_text = if self.fixture_count.is_some() {
-            format!("{} synthetic items", self.count())
-        } else {
-            match &state {
-                Some(LoadState::Loading) => "Loading…".into(),
-                Some(LoadState::Failed(_)) => "Folder unavailable".into(),
-                _ => format!("{} items", self.count()),
+        let (folders, files) = match (&self.browser, self.fixture_count) {
+            (Some(b), None) if b.entries().len() <= 500_000 => {
+                let dirs = b
+                    .entries()
+                    .iter()
+                    .filter(|e| e.kind == EntryKind::Directory)
+                    .count();
+                (dirs, b.entries().len() - dirs)
             }
+            _ => (0, self.count()),
+        };
+        let chip = |icon: El, text: String, hot: bool| {
+            row([icon, detail(text).when(hot, |e| e.fill(selected_ink()))])
+                .gap(5)
+                .pad((8, 3))
+                .align(Align::Center)
+                .radius(3)
+                .fill(if hot { selected() } else { ground() })
+                .shrink(0)
         };
         let status = row([
             glyph(Glyph::Search, muted()),
             filter,
-            detail(status_text).min_w(0).clip(),
-            spacer(),
-            detail(if self.selection.count() == 0 {
-                "No selection".into()
-            } else {
-                format!("{} selected", self.selection.count())
+            detail(match &state {
+                Some(LoadState::Loading) => "Loading…",
+                Some(LoadState::Failed(_)) => "Folder unavailable",
+                _ => "",
             })
             .min_w(0)
             .clip(),
+            spacer(),
+            chip(glyph(Glyph::Folder, muted()), folders.to_string(), false),
+            chip(glyph(Glyph::File, muted()), files.to_string(), false),
+            chip(
+                glyph(Glyph::Inspector, muted()),
+                format!("{}/{}", self.selection.count(), self.count()),
+                self.selection.count() > 0,
+            ),
         ])
         .gap(7)
         .pad((8, 4))
@@ -2355,7 +2415,7 @@ impl TabView {
         } else {
             vec![tabs, hairline(), toolbar]
         };
-        regions.extend([crumbs, hairline(), panes, hairline(), status]);
+        regions.extend([hairline(), panes, hairline(), status]);
         if self.secondary() {
             return col(regions)
                 .w(pct(100))
@@ -2371,37 +2431,6 @@ impl TabView {
         }
         if let Some(row) = jobs.fileops.build(ui) {
             regions.extend([hairline(), row]);
-        }
-        #[cfg(target_os = "linux")]
-        if jobs.file_clipboard.is_some() && real {
-            let enabled = !jobs.mutations_busy()
-                && jobs.file_clipboard.as_ref().is_some_and(|c| c.can_copy())
-                && self
-                    .browser
-                    .as_ref()
-                    .is_some_and(|b| matches!(b.state(), LoadState::Complete));
-            regions.extend([
-                hairline(),
-                row([
-                    action(
-                        ui,
-                        &self.paste_files_id(),
-                        "Copy files from the native clipboard into this folder · Ctrl+V",
-                        label("Paste"),
-                        enabled,
-                        false,
-                    ),
-                    detail("Into this folder · no overwrites")
-                        .min_w(0)
-                        .lines(1)
-                        .clip(),
-                ])
-                .gap(7)
-                .pad((8, 3))
-                .align(Align::Center)
-                .fill(chrome())
-                .shrink(0),
-            ]);
         }
         let tree = col(regions)
             .w(pct(100))
@@ -2911,6 +2940,32 @@ mod multiselection_tests {
     }
 
     #[test]
+    fn toolbar_shows_clickable_breadcrumbs_inside_the_window_until_the_path_is_edited() {
+        let fixture = Fixture::new();
+        let mut h = Harness {
+            view: BrowserView::new(fixture.0.clone()),
+            ui: make_ui().unwrap(),
+            size: Size::new(1024., 720.),
+        };
+        complete(&mut h);
+        let scene = h.ui.scene().unwrap();
+        let root = scene.surface("browser-root").unwrap().frame;
+        let crumbs = h.view.tab().crumbs();
+        assert!(crumbs.len() >= 2);
+        for (i, _, _) in crumbs {
+            let f = scene.surface(&format!("crumb/{i}")).unwrap().frame;
+            assert!(
+                f.x >= root.x && f.right() <= root.right(),
+                "crumb {i} overflows"
+            );
+        }
+        assert!(
+            scene.surface("path-input").is_none(),
+            "editor only while editing"
+        );
+    }
+
+    #[test]
     fn text_field_control_a_edits_text_without_selecting_files() {
         let fixture = Fixture::new();
         for name in ["alpha", "beta"] {
@@ -2923,12 +2978,13 @@ mod multiselection_tests {
         };
         complete(&mut h);
         h.click(0, Mods::default());
-        let field = h.ui.scene().unwrap().surface("path-input").unwrap().frame;
+        let field = h.ui.scene().unwrap().surface("path-click").unwrap().frame;
         let point = Point::new(
             field.x + field.size.width / 2.,
             field.y + field.size.height / 2.,
         );
         h.click_point(point, Mods::default());
+        h.settle();
         assert!(
             h.ui.focus_is_text(),
             "pointer must genuinely enter the editor"
@@ -2954,7 +3010,7 @@ mod multiselection_tests {
             size: Size::new(1024., 720.),
         };
         complete(&mut h);
-        let field = h.ui.scene().unwrap().surface("path-input").unwrap().frame;
+        let field = h.ui.scene().unwrap().surface("path-click").unwrap().frame;
         h.click_point(
             Point::new(
                 field.x + field.size.width / 2.,
@@ -2962,6 +3018,7 @@ mod multiselection_tests {
             ),
             Mods::default(),
         );
+        h.settle();
         assert!(h.ui.focus_is_text());
         let focus = h.ui.focus_key().unwrap().to_owned();
         // Complete a real worker refresh while the editor retains input focus.
