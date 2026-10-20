@@ -80,6 +80,13 @@ fn muted() -> Color {
 fn selected() -> Color {
     theme_pick(0x087d99, 0x4f6bd8, 0x0a86a6)
 }
+fn hover() -> Color {
+    theme_pick(0x293235, 0x1d2333, 0xdde3e6)
+}
+/// Faint tint on odd rows so long listings read across the columns.
+fn stripe() -> Color {
+    theme_pick(0x171c1e, 0x121621, 0xf0f2f3)
+}
 fn selected_ink() -> Color {
     color(0xffffff)
 }
@@ -2293,7 +2300,9 @@ impl TabView {
                     .fill(if active {
                         selected()
                     } else if interaction.hovered {
-                        color(0x293235)
+                        hover()
+                    } else if item.index % 2 == 1 {
+                        stripe()
                     } else {
                         ground()
                     })
