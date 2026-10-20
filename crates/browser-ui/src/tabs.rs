@@ -338,6 +338,9 @@ impl View for BrowserView {
         if let Some(id) = self.workspace.active() {
             let tab = self.workspace.get_mut(id).expect("active tab is live");
             let tree = tab.build(ui, &mut self.jobs, Some(strip));
+            if std::mem::take(&mut tab.context_requested) {
+                self.palette = Some(palette::Palette::context());
+            }
             return match palette_el {
                 Some(el) => col([el, tree.grow(1).basis(0).min_h(0)])
                     .w(pct(100))
