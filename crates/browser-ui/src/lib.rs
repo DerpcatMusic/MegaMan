@@ -416,6 +416,7 @@ struct TabView {
     watch: Option<(PathBuf, browser_core::watch::DirWatch)>,
     reload_at: Option<std::time::Instant>,
     context_requested: bool,
+    view_requested: bool,
 }
 
 impl TabView {
@@ -506,6 +507,7 @@ impl TabView {
             watch: None,
             reload_at: None,
             context_requested: false,
+            view_requested: false,
         }
     }
     #[cfg(target_os = "linux")]
@@ -1678,6 +1680,9 @@ impl TabView {
         if clicked(ui, &self.pid("path-click")) {
             ui.focus(self.pid("path-input"));
         }
+        if clicked(ui, &self.pid("view")) {
+            self.view_requested = true;
+        }
         if clicked(ui, &self.pid("menu")) {
             self.context_requested = true;
         }
@@ -1879,6 +1884,14 @@ impl TabView {
         if !self.secondary() {
             toolbar_items.extend([find_action, inspector]);
         }
+        toolbar_items.push(action(
+            ui,
+            &self.pid("view"),
+            "View and sort",
+            label("View ▾"),
+            real,
+            false,
+        ));
         toolbar_items.push(action(
             ui,
             &self.pid("menu"),

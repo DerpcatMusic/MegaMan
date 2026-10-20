@@ -563,6 +563,12 @@ impl View for BrowserView {
                     ui.pointer().pos.unwrap_or_default(),
                 ));
             }
+            if std::mem::take(&mut tab.view_requested) {
+                self.palette = Some(palette::Palette::dropdown(
+                    ui.pointer().pos.unwrap_or_default(),
+                    palette::VIEW,
+                ));
+            }
             if let Some(b) = &mut self.pane_b {
                 b.active_pane = self.b_active;
                 let right = b.build(ui, &mut self.jobs, None);
