@@ -544,6 +544,7 @@ mod tests {
             snapshot: None,
             filter: String::new(),
             sort: crate::SortOrder::default(),
+            show_hidden: true,
             state: LoadState::Loading,
             history: vec![PathBuf::from("synthetic")],
             history_index: 0,

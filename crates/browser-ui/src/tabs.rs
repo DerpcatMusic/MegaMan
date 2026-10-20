@@ -4,6 +4,7 @@ use browser_core::workspace::{Activation, Limits, TabId, TabSnapshot, Workspace}
 
 pub struct BrowserView {
     pub(super) workspace: Workspace<TabView>,
+    palette: Option<palette::Palette>,
     pub(super) jobs: AppJobs,
 }
 
@@ -16,6 +17,7 @@ impl BrowserView {
             .unwrap_or_else(|_| unreachable!("empty workspace admits first tab"));
         Self {
             workspace,
+            palette: None,
             jobs: AppJobs {
                 places: places::Places::load(),
                 ..AppJobs::default()
@@ -154,6 +156,26 @@ impl BrowserView {
         }
         None
     }
+    fn run_command(&mut self, ui: &mut Ui, cmd: palette::Cmd) {
+        use palette::Cmd;
+        let intent = match cmd {
+            Cmd::NewTab => Some(TabIntent::New),
+            Cmd::CloseTab => self.workspace.active().map(TabIntent::Close),
+            Cmd::ReopenTab => Some(TabIntent::Reopen),
+            Cmd::NextTab => Some(TabIntent::Cycle(1)),
+            Cmd::PrevTab => Some(TabIntent::Cycle(-1)),
+            _ => None,
+        };
+        if let Some(intent) = intent {
+            self.apply_tab_intent(ui, intent);
+        } else if let Some(id) = self.workspace.active() {
+            ui.focus("file-list");
+            self.workspace
+                .get_mut(id)
+                .expect("active tab is live")
+                .run_command(ui, &mut self.jobs, cmd);
+        }
+    }
     fn apply_tab_intent(&mut self, ui: &mut Ui, intent: TabIntent) {
         let changed = match intent {
             TabIntent::Activate(id) => self.workspace.activate(id).unwrap_or(false),
@@ -265,6 +287,13 @@ impl BrowserView {
 
 impl View for BrowserView {
     fn build(&mut self, ui: &mut Ui, input: &Input) -> El {
+        if ui
+            .shortcuts()
+            .iter()
+            .any(|p| (p.mods.ctrl || p.mods.cmd) && matches!(p.key, Key::Char('p' | 'P')))
+        {
+            self.palette = Some(palette::Palette::open());
+        }
         if let Some(intent) = self.tab_intent(ui) {
             self.apply_tab_intent(ui, intent);
         }
@@ -293,9 +322,30 @@ impl View for BrowserView {
             return tree;
         }
         let strip = self.tab_strip(ui);
+        let mut palette_el = None;
+        if let Some(palette) = &mut self.palette {
+            let (el, outcome) = palette.build(ui);
+            palette_el = Some(el);
+            match outcome {
+                palette::Outcome::Open => {}
+                palette::Outcome::Close => self.palette = None,
+                palette::Outcome::Run(cmd) => {
+                    self.palette = None;
+                    self.run_command(ui, cmd);
+                }
+            }
+        }
         if let Some(id) = self.workspace.active() {
             let tab = self.workspace.get_mut(id).expect("active tab is live");
-            return tab.build(ui, &mut self.jobs, Some(strip));
+            let tree = tab.build(ui, &mut self.jobs, Some(strip));
+            return match palette_el {
+                Some(el) => col([el, tree.grow(1).basis(0).min_h(0)])
+                    .w(pct(100))
+                    .h(pct(100))
+                    .min_w(0)
+                    .min_h(0),
+                None => tree,
+            };
         }
         let tree = col([strip, label("No folders open")])
             .grow(1)

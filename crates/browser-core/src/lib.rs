@@ -66,6 +66,7 @@ pub enum LoadState {
 struct Request {
     generation: u64,
     sort: SortOrder,
+    show_hidden: bool,
     path: PathBuf,
     filter: String,
     location_revision: u64,
@@ -110,6 +111,7 @@ pub struct Browser {
     state: LoadState,
     filter: String,
     sort: SortOrder,
+    show_hidden: bool,
     history: Vec<PathBuf>,
     history_index: usize,
     location_revision: u64,
@@ -139,6 +141,7 @@ impl Browser {
             state: LoadState::Loading,
             filter: String::new(),
             sort: SortOrder::default(),
+            show_hidden: true,
             history_index: 0,
             location_revision: 0,
             shared,
@@ -212,6 +215,16 @@ impl Browser {
     pub fn sort(&self) -> SortOrder {
         self.sort
     }
+    pub fn show_hidden(&self) -> bool {
+        self.show_hidden
+    }
+    /// Dot-prefixed names are hidden when false. Shown by default for compatibility.
+    pub fn set_show_hidden(&mut self, show: bool) {
+        if self.show_hidden != show {
+            self.show_hidden = show;
+            self.submit();
+        }
+    }
     pub fn set_sort(&mut self, sort: SortOrder) {
         if self.sort != sort {
             self.sort = sort;
@@ -271,6 +284,7 @@ impl Browser {
         let request = Request {
             generation,
             sort: self.sort,
+            show_hidden: self.show_hidden,
             path: self.path.clone(),
             filter: self.filter.clone(),
             location_revision: self.location_revision,
@@ -622,6 +636,9 @@ fn filter_entries(
         if index % 256 == 0 && shared.obsolete(request.generation) {
             return None;
         }
+        if !request.show_hidden && record.entry.name.as_encoded_bytes().starts_with(b".") {
+            continue;
+        }
         if filter.is_empty() || record.folded_name.contains(&filter) {
             entries.push(record.entry.clone());
         }
@@ -864,6 +881,20 @@ mod tests {
         assert_eq!(names(&browser), ["dir", "big", "small", "mid.txt"]);
     }
 
+    #[test]
+    fn hidden_entries_are_filtered_from_the_cached_listing() {
+        let fixture = Fixture::new();
+        fs::write(fixture.0.join(".secret"), b"").unwrap();
+        fs::write(fixture.0.join("visible"), b"").unwrap();
+        let mut browser = Browser::new(fixture.0.clone());
+        wait(&mut browser);
+        assert_eq!(browser.entries().len(), 2);
+        browser.set_show_hidden(false);
+        wait(&mut browser);
+        assert_eq!(browser.entries().len(), 1);
+        assert_eq!(browser.entries()[0].name, "visible");
+    }
+
     #[cfg(unix)]
     #[test]
     fn non_utf8_names_round_trip_and_symlinks_are_not_followed() {
@@ -911,6 +942,7 @@ mod tests {
             path: PathBuf::new(),
             filter: String::new(),
             sort: SortOrder::default(),
+            show_hidden: true,
         };
         assert!(sort_cancellable(Vec::new(), SortOrder::default(), 1, &shared).is_none());
         let record = Record {
