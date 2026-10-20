@@ -8,7 +8,7 @@ use rustix::{
 use std::{
     ffi::{OsStr, OsString},
     io::Write,
-    os::unix::ffi::OsStrExt,
+    os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Path, PathBuf},
 };
 
@@ -184,12 +184,44 @@ fn now_local_iso() -> String {
     )
 }
 
-/// Move to the home trash (freedesktop.org Trash spec). Same filesystem only.
+/// Move to the trash (freedesktop.org Trash spec): the home trash, or `$topdir/.Trash-$uid`
+/// when the item lives on another filesystem.
 pub fn trash(path: &Path) -> Result<Undo> {
-    trash_in(path, &trash_root()?)
+    match trash_in(path, &trash_root()?) {
+        Err(e) if e.raw_os_error == Some(Errno::XDEV.raw_os_error()) => {
+            let abs =
+                std::path::absolute(path).map_err(|e| OperationError::io("trash", path, e))?;
+            let top = mount_top(&abs)?;
+            let uid = std::fs::metadata("/proc/self")
+                .map_err(|e| OperationError::io("trash", &abs, e))?
+                .uid();
+            trash_with(&abs, &top.join(format!(".Trash-{uid}")), Some(&top))
+        }
+        other => other,
+    }
+}
+/// The root directory of the filesystem containing `path`.
+fn mount_top(path: &Path) -> Result<PathBuf> {
+    let dev = |p: &Path| std::fs::metadata(p).map(|m| m.dev());
+    let first = path
+        .parent()
+        .ok_or_else(|| err(ErrorKind::InvalidPath, "trash", path, "path has no parent"))?;
+    let want = dev(first).map_err(|e| OperationError::io("trash", first, e))?;
+    let mut top = first;
+    for ancestor in first.ancestors().skip(1) {
+        if dev(ancestor).ok() != Some(want) {
+            break;
+        }
+        top = ancestor;
+    }
+    Ok(top.to_path_buf())
 }
 /// Trash into an explicit trash directory (testable; `trash` uses the home trash).
 pub fn trash_in(path: &Path, root: &Path) -> Result<Undo> {
+    trash_with(path, root, None)
+}
+/// `relative_to`: topdir trashes record paths relative to their topdir, per the spec.
+fn trash_with(path: &Path, root: &Path, relative_to: Option<&Path>) -> Result<Undo> {
     let path = std::path::absolute(path).map_err(|e| OperationError::io("trash", path, e))?;
     let (_, name) = parent_and_name(&path)?;
     if let Some(parent) = root.parent() {
@@ -225,7 +257,11 @@ pub fn trash_in(path: &Path, root: &Path) -> Result<Undo> {
         let mut file = std::fs::File::from(fd);
         let body = format!(
             "[Trash Info]\nPath={}\nDeletionDate={}\n",
-            percent_encode(&path),
+            percent_encode(
+                relative_to
+                    .and_then(|t| path.strip_prefix(t).ok())
+                    .unwrap_or(&path)
+            ),
             now_local_iso()
         );
         let written = file
@@ -319,6 +355,20 @@ mod tests {
         assert!(!d.join("a").exists());
         assert!(validate_name(OsStr::new("../x")).is_err());
         assert!(validate_name(OsStr::new("")).is_err());
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    fn topdir_trash_records_relative_paths_and_restores() {
+        let d = tmp("topdir");
+        std::fs::write(d.join("f"), b"1").unwrap();
+        let top = d.join(".Trash-test");
+        let t = trash_with(&d.join("f"), &top, Some(&d)).unwrap();
+        let Undo::Untrash(a) = &t else { panic!() };
+        let info = std::fs::read_to_string(&a.trash_info).unwrap();
+        assert!(info.contains("Path=f\n"), "{info}");
+        assert_eq!(mount_top(&d.join("f")).unwrap().is_absolute(), true);
+        undo(&t).unwrap();
+        assert!(d.join("f").exists());
         std::fs::remove_dir_all(d).unwrap();
     }
     #[test]

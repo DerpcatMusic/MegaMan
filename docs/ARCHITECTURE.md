@@ -6,7 +6,7 @@ MegaMan separates its application-rendered MUI interface from filesystem and des
 - `browser-search`: cancellable explicit-root filename indexing, complete match counts and bounded result pages.
 - `browser-archive`: bounded ZIP catalogs, typed member identities, integrity-checked transactions and retained extraction jobs.
 - `browser-operations`: Linux copy-to-new-destination plans, private staging, independent readback, metadata policy, no-replace publication and truthful receipts.
-- `browser-operations::fsops`: single-step create, rename, move and home-Trash operations with no-replace semantics; each returns an inverse used by bounded undo. Cross-filesystem move and non-home trash are not implemented and report an error.
+- `browser-operations::fsops`: single-step create, rename, move and home-Trash operations with no-replace semantics; each returns an inverse used by bounded undo. Trash falls back to `$topdir/.Trash-$uid` on other filesystems; cross-filesystem move is not implemented and reports an error.
 - `browser-transfer`: lossless native file URI/desktop clipboard codecs.
 - `browser-native`: worker-owned X11 clipboard and a bounded drag/drop lifecycle contract; actual native drag/drop transport is still in development.
 - `browser-ui`: intrinsic controls, virtualized collections, persistent job screens and shared mutation admission.
