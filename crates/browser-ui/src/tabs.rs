@@ -84,7 +84,7 @@ impl BrowserView {
     }
     pub(super) fn poll_jobs(&mut self) -> bool {
         let (mut changed, refresh) = self.jobs.poll();
-        if refresh.iter().all(Option::is_none) {
+        if refresh.is_empty() {
             return changed;
         }
         // Workspace count is bounded. Destinations are native paths captured by
@@ -95,7 +95,6 @@ impl BrowserView {
             if let Some(browser) = &mut tab.browser
                 && refresh
                     .iter()
-                    .flatten()
                     .any(|destination| browser.path() == destination)
             {
                 browser.navigate(browser.path().to_path_buf());
@@ -206,10 +205,14 @@ impl View for BrowserView {
                 | Key::Enter
                 | Key::Space
                 | Key::Escape
+                | Key::Delete
+                | Key::Function(2)
         ) || ((mods.ctrl || mods.cmd)
             && matches!(
                 key,
-                Key::Char('l' | 'f' | 'F' | 'a' | 'A' | 'c' | 'C' | 'v' | 'V')
+                Key::Char(
+                    'l' | 'f' | 'F' | 'a' | 'A' | 'c' | 'C' | 'v' | 'V' | 'z' | 'Z' | 'n' | 'N'
+                )
             ))
             || (mods.alt && matches!(key, Key::Left | Key::Right))
     }
