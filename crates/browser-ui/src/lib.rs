@@ -622,6 +622,12 @@ impl TabView {
         if jobs.mutations_busy() {
             return;
         }
+        if self.selection.count() > 1 {
+            let snapshot = self.browser.as_ref().and_then(Browser::snapshot);
+            jobs.fileops
+                .batch_rename_selection(snapshot, &self.selection);
+            return;
+        }
         let entry = self
             .selected
             .zip(self.browser.as_ref())

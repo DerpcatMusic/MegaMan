@@ -12,6 +12,8 @@ pub(super) enum PromptKind {
     Rename(PathBuf),
     NewFolder(PathBuf),
     NewFile(PathBuf),
+    /// Template rename of several items: `{name}` stem, `{ext}` with dot, `{n}` or `{n:3}` counter.
+    Batch(Vec<PathBuf>),
 }
 pub(super) struct Prompt {
     kind: PromptKind,
@@ -29,6 +31,7 @@ pub(super) struct FileOps {
     prompt: Option<Prompt>,
     selecting: Option<Materialization>,
     cutting: Option<Materialization>,
+    renaming: Option<Materialization>,
     cut: Option<Vec<PathBuf>>,
     running: Option<mpsc::Receiver<Done>>,
     undo: Vec<Vec<Undo>>,
@@ -36,13 +39,76 @@ pub(super) struct FileOps {
     refresh: Vec<PathBuf>,
 }
 
+/// Expand a batch template for the `n`th (1-based) path.
+fn expand(template: &str, path: &FsPath, n: usize) -> OsString {
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = path
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let mut out = String::new();
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let Some(close) = rest[open..].find('}') else {
+            break;
+        };
+        let token = &rest[open + 1..open + close];
+        match token {
+            "name" => out.push_str(&stem),
+            "ext" => out.push_str(&ext),
+            "n" => out.push_str(&n.to_string()),
+            t if t.starts_with("n:") && t[2..].parse::<usize>().is_ok() => {
+                let width = t[2..].parse::<usize>().unwrap_or(1).min(12);
+                out.push_str(&format!("{n:0width$}"));
+            }
+            other => {
+                out.push('{');
+                out.push_str(other);
+                out.push('}');
+            }
+        }
+        rest = &rest[open + close + 1..];
+    }
+    out.push_str(rest);
+    OsString::from(out)
+}
+/// `(from, new name)` for every path that actually changes, or why the template is unusable.
+pub(super) fn batch_plan(
+    template: &str,
+    paths: &[PathBuf],
+) -> Result<Vec<(PathBuf, OsString)>, String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut plan = Vec::new();
+    for (i, path) in paths.iter().enumerate() {
+        let name = expand(template, path, i + 1);
+        fsops::validate_name(&name)
+            .map_err(|e| format!("{}: {}", name.to_string_lossy(), e.message))?;
+        if !seen.insert((parent_of(path), name.clone())) {
+            return Err(format!(
+                "\"{}\" would be used twice; add {{n}}",
+                name.to_string_lossy()
+            ));
+        }
+        if path.file_name() != Some(name.as_os_str()) {
+            plan.push((path.clone(), name));
+        }
+    }
+    Ok(plan)
+}
 fn parent_of(path: &FsPath) -> Option<PathBuf> {
     path.parent().map(FsPath::to_path_buf)
 }
 
 impl FileOps {
     pub(super) fn busy(&self) -> bool {
-        self.selecting.is_some() || self.cutting.is_some() || self.running.is_some()
+        self.selecting.is_some()
+            || self.cutting.is_some()
+            || self.renaming.is_some()
+            || self.running.is_some()
     }
     pub(super) fn open_prompt(&mut self, kind: PromptKind, text: String) {
         self.message = None;
@@ -76,21 +142,33 @@ impl FileOps {
             self.prompt = Some(prompt);
             return false;
         }
+        let kind = match prompt.kind {
+            PromptKind::Batch(paths) => {
+                let prompt = Prompt {
+                    kind: PromptKind::Batch(paths.clone()),
+                    ..prompt
+                };
+                return self.commit_batch(paths, prompt);
+            }
+            other => other,
+        };
         let name = OsString::from(prompt.text.trim_end_matches('\n'));
         if let Err(error) = fsops::validate_name(&name) {
             self.message = Some((format!("Invalid name: {}", error.message), true));
             self.prompt = Some(Prompt {
+                kind,
                 focus: true,
                 ..prompt
             });
             return false;
         }
-        let (label, verb) = match prompt.kind {
+        let (label, verb) = match kind {
             PromptKind::Rename(_) => ("Renaming", "Renamed"),
             _ => ("Creating", "Created"),
         };
         self.spawn(label, move || {
-            let (result, dir) = match prompt.kind {
+            let (result, dir) = match kind {
+                PromptKind::Batch(_) => unreachable!("batch prompts return before this point"),
                 PromptKind::Rename(path) => (
                     fsops::rename(&path, &name),
                     parent_of(&path).unwrap_or_default(),
@@ -141,6 +219,65 @@ impl FileOps {
                 self.message = Some((format!("Cannot {what}: {error:?}"), true));
                 None
             }
+        }
+    }
+    fn commit_batch(&mut self, paths: Vec<PathBuf>, prompt: Prompt) -> bool {
+        let plan = match batch_plan(&prompt.text, &paths) {
+            Ok(plan) if plan.is_empty() => {
+                self.message = Some(("Nothing to rename.".into(), false));
+                return false;
+            }
+            Ok(plan) => plan,
+            Err(message) => {
+                self.message = Some((message, true));
+                self.prompt = Some(Prompt {
+                    focus: true,
+                    ..prompt
+                });
+                return false;
+            }
+        };
+        self.spawn("Renaming", move || {
+            let mut done = Done {
+                undo: Vec::new(),
+                refresh: Vec::new(),
+                failure: None,
+                verb: "Renamed",
+            };
+            // All-or-nothing admission: no target may already exist (including another source).
+            if let Some((_, name)) = plan.iter().find(|(from, name)| {
+                parent_of(from).is_some_and(|dir| std::fs::symlink_metadata(dir.join(name)).is_ok())
+            }) {
+                done.failure = Some(format!(
+                    "\"{}\" already exists; nothing was renamed",
+                    name.to_string_lossy()
+                ));
+                return done;
+            }
+            for (from, name) in &plan {
+                match fsops::rename(from, name) {
+                    Ok(op) => {
+                        done.refresh.extend(parent_of(from));
+                        done.undo.push(op);
+                    }
+                    Err(e) => {
+                        done.failure = Some(e.to_string());
+                        break;
+                    }
+                }
+            }
+            done
+        });
+        true
+    }
+    /// F2 on several items: materialize them, then ask for a template.
+    pub(super) fn batch_rename_selection(
+        &mut self,
+        snapshot: Option<browser_core::listing::ListingSnapshot>,
+        selection: &Selection,
+    ) {
+        if !self.busy() {
+            self.renaming = self.materialize(snapshot, selection, "rename");
         }
     }
     /// Begin trashing the selection: materialize paths off-thread, then trash each.
@@ -276,6 +413,22 @@ impl FileOps {
                 }
             }
         }
+        if let Some(work) = &mut self.renaming
+            && let Some(result) = work.poll()
+        {
+            self.renaming = None;
+            changed = true;
+            match result {
+                Ok(paths) => {
+                    self.message = None;
+                    self.open_prompt(
+                        PromptKind::Batch(paths.into_paths()),
+                        "{name}-{n}{ext}".into(),
+                    );
+                }
+                Err(error) => self.message = Some((format!("Cannot rename: {error:?}"), true)),
+            }
+        }
         if let Some(work) = &mut self.cutting
             && let Some(result) = work.poll()
         {
@@ -328,6 +481,7 @@ impl FileOps {
                 PromptKind::Rename(_) => "Rename to",
                 PromptKind::NewFolder(_) => "New folder",
                 PromptKind::NewFile(_) => "New file",
+                PromptKind::Batch(_) => "Rename items to",
             };
             let field = text_edit(ui, "name-prompt", &mut prompt.text, TextOpts::default());
             commit = field.changed.submitted;
@@ -349,27 +503,55 @@ impl FileOps {
             );
             cancel = clicked(ui, "name-prompt-cancel");
             commit |= clicked(ui, "name-prompt-ok");
-            el = Some(
-                row([
-                    detail(title),
-                    field
-                        .el
-                        .grow(1)
-                        .basis(0)
-                        .min_w(0)
-                        .fill(ground())
-                        .named(title),
-                    ok,
-                    no,
+            let hint = match &prompt.kind {
+                PromptKind::Batch(paths) => Some(match batch_plan(&prompt.text, paths) {
+                    Ok(plan) => plan
+                        .iter()
+                        .take(3)
+                        .map(|(from, to)| {
+                            format!(
+                                "{} → {}",
+                                from.file_name().unwrap_or_default().to_string_lossy(),
+                                to.to_string_lossy()
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("   ·   "),
+                    Err(message) => message,
+                }),
+                _ => None,
+            };
+            let main = row([
+                detail(title),
+                field
+                    .el
+                    .grow(1)
+                    .basis(0)
+                    .min_w(0)
+                    .fill(ground())
+                    .named(title),
+                ok,
+                no,
+            ])
+            .gap(7)
+            .pad((8, 3))
+            .align(Align::Center)
+            .fill(chrome())
+            .shrink(0)
+            .min_w(0)
+            .id("name-prompt-row");
+            el = Some(match hint {
+                Some(hint) => col([
+                    main,
+                    row([detail(hint).min_w(0).lines(1).clip()])
+                        .pad((8, 2))
+                        .fill(chrome())
+                        .min_w(0),
                 ])
-                .gap(7)
-                .pad((8, 3))
-                .align(Align::Center)
-                .fill(chrome())
                 .shrink(0)
-                .min_w(0)
-                .id("name-prompt-row"),
-            );
+                .min_w(0),
+                None => main,
+            });
         } else if let Some((text, failed)) = &self.message {
             el = Some(
                 row([detail(text.clone())
@@ -469,6 +651,63 @@ mod tests {
         ops.undo_last();
         settle(&mut ops);
         assert!(dir.join("a").exists() && !dir.join("dest/a").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn batch_templates_expand_validate_and_reject_collisions() {
+        let paths = vec![
+            PathBuf::from("/d/a.txt"),
+            PathBuf::from("/d/b.tar.gz"),
+            PathBuf::from("/d/c"),
+        ];
+        let plan = batch_plan("img-{n:3}{ext}", &paths).unwrap();
+        let names: Vec<_> = plan
+            .iter()
+            .map(|(_, n)| n.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["img-001.txt", "img-002.gz", "img-003"]);
+        assert!(batch_plan("same", &paths).unwrap_err().contains("twice"));
+        assert!(
+            batch_plan("a/{n}", &paths).is_err(),
+            "separators are rejected"
+        );
+        assert_eq!(
+            batch_plan("{name}{ext}", &paths).unwrap().len(),
+            0,
+            "unchanged names are skipped"
+        );
+        assert_eq!(expand("{x}{name}", &paths[0], 1), OsString::from("{x}a"));
+    }
+    #[test]
+    fn batch_rename_is_all_or_nothing_on_existing_targets_and_undoes_together() {
+        let dir = std::env::temp_dir().join(format!("fileops-batch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for n in ["a", "b"] {
+            std::fs::write(dir.join(n), n).unwrap();
+        }
+        let mut ops = FileOps::default();
+        ops.open_prompt(
+            PromptKind::Batch(vec![dir.join("a"), dir.join("b")]),
+            "x{n}".into(),
+        );
+        assert!(ops.commit_prompt());
+        settle(&mut ops);
+        assert!(dir.join("x1").exists() && dir.join("x2").exists());
+        ops.undo_last();
+        settle(&mut ops);
+        assert!(dir.join("a").exists() && dir.join("b").exists());
+        std::fs::write(dir.join("x2"), "taken").unwrap();
+        ops.open_prompt(
+            PromptKind::Batch(vec![dir.join("a"), dir.join("b")]),
+            "x{n}".into(),
+        );
+        ops.commit_prompt();
+        settle(&mut ops);
+        assert!(
+            dir.join("a").exists() && dir.join("b").exists(),
+            "nothing renamed"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
