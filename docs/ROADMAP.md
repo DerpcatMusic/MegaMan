@@ -6,7 +6,7 @@ MegaMan is being built in verified increments. Existing functionality is experim
 - Bookmarks (Ctrl+D), recent folders and mounted volumes appear in the places rail. Add resizable split panels and saved workspaces.
 - Complete native inbound/outbound drag/drop, Wayland clipboard/data-device support and platform context actions.
 - Extend safe operations: cut (Ctrl+X) + paste moves on one filesystem; rename (F2), create (Ctrl+N / Ctrl+Shift+N), trash (Delete) and undo (Ctrl+Z) exist; move, cross-filesystem move, per-volume trash, conflict decisions and recovery remain.
-- Add previews, thumbnails, inspectors and file-opening integrations on bounded workers.
+- Text and image previews (bounded, worker-decoded) exist in the inspector. Add thumbnails, richer inspectors and file-opening integrations.
 - Extend archive workflows with password entry, creation, nested browsing, preview/drag staging, more formats and independent encryption interoperability tests.
 - Add watcher convergence, large-folder sorting/filtering, system-wide indexed finding and explicit incomplete-coverage feedback.
 - Sort columns (Name, Type, Modified, Size) and real sizes/dates exist. Add list/grid/tree views, grouping, disk usage and future column-based navigation.

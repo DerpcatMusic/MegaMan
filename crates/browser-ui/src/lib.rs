@@ -15,6 +15,7 @@ mod fileops;
 mod jobs;
 mod palette;
 mod places;
+mod preview;
 use jobs::AppJobs;
 mod tabs;
 pub use tabs::BrowserView;
@@ -395,6 +396,7 @@ struct TabView {
     find: Option<FindPanel>,
     archive: Option<ArchivePanel>,
     reveal_path: Option<PathBuf>,
+    preview: preview::Preview,
 }
 
 impl TabView {
@@ -470,6 +472,7 @@ impl TabView {
             find: None,
             archive: None,
             reveal_path: None,
+            preview: preview::Preview::default(),
         }
     }
     #[cfg(target_os = "linux")]
@@ -1160,6 +1163,10 @@ impl TabView {
                 .gap(8)
                 .pad(14),
             );
+            if let Some(view) = self.preview.view(self.inspector_width) {
+                fields.push(hairline());
+                fields.push(view);
+            }
             fields.push(spacer());
             fields.push(
                 detail(if self.fixture_count.is_some() {
@@ -1171,7 +1178,7 @@ impl TabView {
                 {
                     "Press Enter or double-click to browse this ZIP."
                 } else {
-                    "Preview and file operations are not yet available."
+                    "Folders and special files have no preview."
                 })
                 .wrap()
                 .pad(14),
@@ -1324,6 +1331,13 @@ impl TabView {
             return jobs.with_mutation_status(ui, tree);
         }
         self.refresh();
+        let preview_path = self
+            .selected
+            .filter(|_| self.show_inspector && self.fixture_count.is_none())
+            .and_then(|i| self.browser.as_ref()?.entries().get(i))
+            .filter(|e| e.kind == EntryKind::File)
+            .map(|e| e.path.clone());
+        self.preview.show(preview_path.as_deref());
         for (id, key) in [
             ("sort-name", SortKey::Name),
             ("sort-kind", SortKey::Kind),
@@ -1911,6 +1925,7 @@ impl TabView {
     fn changed(&mut self) -> bool {
         let mut changed = std::mem::take(&mut self.geometry_changed);
         changed |= self.refresh();
+        changed |= self.preview.poll();
         if let Some(find) = &mut self.find {
             changed |= find.poll();
         }
