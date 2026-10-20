@@ -257,6 +257,15 @@ impl AppJobs {
     pub(super) fn poll(&mut self) -> (bool, Vec<PathBuf>) {
         let mut changed = self.poll_file_clipboard() | self.fileops.poll();
         let mut refresh = self.fileops.take_refresh();
+        #[cfg(target_os = "linux")]
+        if self.copy_transfers.as_ref().is_none_or(|c| !c.busy())
+            && let Some((paths, dest)) = self.fileops.take_outbox()
+        {
+            self.copy_transfers
+                .get_or_insert_with(transfers::TransfersUi::new)
+                .start(paths, dest);
+            self.geometry_changed = true;
+        }
         if let Some(extraction) = &mut self.extraction {
             changed |= extraction.poll();
             if let Some(parent) = extraction.take_refresh_parent() {

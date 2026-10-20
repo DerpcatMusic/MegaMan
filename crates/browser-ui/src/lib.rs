@@ -380,6 +380,8 @@ struct TabView {
     fixture_count: Option<usize>,
     /// Element-id prefix: "" for the main pane, "b/" for the second pane of a split.
     pfx: &'static str,
+    /// Only the focused pane of a split reacts to the keyboard.
+    active_pane: bool,
     sizes: dirsize::DirSizes,
     /// Type-to-select buffer and when its last letter arrived.
     ahead: (String, Option<std::time::Instant>),
@@ -445,6 +447,7 @@ impl TabView {
         let mut result = Self {
             fixture_count: Some(count),
             pfx: "",
+            active_pane: true,
             sizes: Default::default(),
             ahead: Default::default(),
             path_text: "/Synthetic / Performance fixture".into(),
@@ -467,6 +470,7 @@ impl TabView {
             browser: None,
             fixture_count: None,
             pfx: "",
+            active_pane: true,
             sizes: Default::default(),
             ahead: Default::default(),
             list: ListState::uniform_count(0, ROW),
@@ -558,6 +562,7 @@ impl TabView {
                 let snap = snapshot();
                 jobs.fileops.compress_selection(snap, &self.selection);
             }
+            Cmd::ToggleSplit | Cmd::CopyToOther | Cmd::MoveToOther => {}
             Cmd::Undo => jobs.fileops.undo_last(),
             Cmd::Cut => {
                 let snap = snapshot();
@@ -755,6 +760,15 @@ impl TabView {
         self.grid = !self.grid;
         self.list = ListState::uniform_count(self.lines(), self.line_height());
     }
+    /// The second pane of a split: no tab strip, places rail, inspector, find, archives or job rows.
+    fn secondary(&self) -> bool {
+        !self.pfx.is_empty()
+    }
+    /// Send the selection to `dest` (the other pane's folder).
+    fn send_to(&mut self, jobs: &mut AppJobs, dest: PathBuf, mv: bool) {
+        let snap = self.browser.as_ref().and_then(Browser::snapshot);
+        jobs.fileops.send_selection(snap, &self.selection, dest, mv);
+    }
     fn pid(&self, id: &str) -> String {
         format!("{}{id}", self.pfx)
     }
@@ -868,7 +882,7 @@ impl TabView {
             .map(|e| (e.path.clone(), e.kind));
         match entry {
             Some((path, EntryKind::Directory)) => self.navigate(path),
-            Some((path, EntryKind::File)) if zip_path(&path) => {
+            Some((path, EntryKind::File)) if zip_path(&path) && !self.secondary() => {
                 self.find = None;
                 self.archive = Some(ArchivePanel::new(path));
             }
@@ -1013,7 +1027,7 @@ impl TabView {
                 self.toggle_hidden();
             }
             if (press.mods.ctrl || press.mods.cmd) && press.key == Key::Char('l') {
-                ui.focus(&self.pid("path-input"));
+                ui.focus(self.pid("path-input"));
             }
             if (press.mods.ctrl || press.mods.cmd)
                 && matches!(press.key, Key::Char('f' | 'F'))
@@ -1022,13 +1036,13 @@ impl TabView {
                 if press.mods.shift {
                     self.open_find(ui);
                 } else {
-                    ui.focus(&self.pid("filter-input"));
+                    ui.focus(self.pid("filter-input"));
                 }
             }
             if press.key == Key::Escape {
                 jobs.fileops.cancel_prompt();
                 self.apply_selection(SelectAction::Clear, false);
-                ui.focus(&self.pid("file-list"));
+                ui.focus(self.pid("file-list"));
             }
             if files_focused
                 && self.inspector_fits()
@@ -1051,6 +1065,7 @@ impl TabView {
     }
     fn open_find(&mut self, ui: &mut Ui) {
         if self.fixture_count.is_none()
+            && !self.secondary()
             && let Some(browser) = &self.browser
         {
             self.find = Some(FindPanel::new(browser.path().to_path_buf()));
@@ -1073,13 +1088,14 @@ impl TabView {
                 }
             }
         }
-        ui.focus(&self.pid("file-list"));
+        ui.focus(self.pid("file-list"));
         None
     }
     fn inspector_fits(&self) -> bool {
         let rail = self.show_rail && self.window.width >= RAIL_MIN + CONTENT_MIN + GAP;
-        self.window.width
-            >= CONTENT_MIN + INSPECTOR_MIN + GAP + if rail { self.rail_width + GAP } else { 0. }
+        !self.secondary()
+            && self.window.width
+                >= CONTENT_MIN + INSPECTOR_MIN + GAP + if rail { self.rail_width + GAP } else { 0. }
     }
     fn build_archive(&mut self, ui: &mut Ui, jobs: &mut AppJobs) -> Option<El> {
         let busy = jobs.mutations_busy();
@@ -1579,7 +1595,7 @@ impl TabView {
             } else if let Some(archive) = &mut self.archive {
                 archive.restore_focus();
             } else {
-                ui.focus(&self.pid("file-list"));
+                ui.focus(self.pid("file-list"));
             }
         }
         let leaving_subview = self.find.is_some() || self.archive.is_some();
@@ -1592,7 +1608,7 @@ impl TabView {
         self.refresh();
         let preview_path = self
             .selected
-            .filter(|_| self.show_inspector && self.fixture_count.is_none())
+            .filter(|_| self.show_inspector && !self.secondary() && self.fixture_count.is_none())
             .and_then(|i| self.browser.as_ref()?.entries().get(i))
             .filter(|e| matches!(e.kind, EntryKind::File | EntryKind::Directory))
             .map(|e| e.path.clone());
@@ -1613,7 +1629,7 @@ impl TabView {
                 .focus_key()
                 .is_none_or(|id| id.starts_with(&self.pid("file-list")))
         {
-            ui.focus(&self.pid("file-list"));
+            ui.focus(self.pid("file-list"));
         }
         if let Some(scene) = ui.scene() {
             if let Some(frame) = scene.surface(&self.pid("browser-root")) {
@@ -1634,7 +1650,7 @@ impl TabView {
             self.list
                 .scroll_to_item(index / self.cols(), ScrollTo::Nearest);
         }
-        if !leaving_subview && !discard_listing_input {
+        if !leaving_subview && !discard_listing_input && self.active_pane {
             self.shortcut(ui, jobs);
         }
         if let Some(tree) = self.build_find(ui) {
@@ -1717,7 +1733,9 @@ impl TabView {
             can_up,
             false,
         );
-        let show_rail = self.show_rail && self.window.width >= RAIL_MIN + CONTENT_MIN + GAP;
+        let show_rail = !self.secondary()
+            && self.show_rail
+            && self.window.width >= RAIL_MIN + CONTENT_MIN + GAP;
         let show_inspector = self.show_inspector && self.inspector_fits();
         let places = action(
             ui,
@@ -1741,7 +1759,7 @@ impl TabView {
         );
         let path = text_edit(
             ui,
-            &self.pid("path-input"),
+            self.pid("path-input"),
             &mut self.path_text,
             TextOpts::default(),
         );
@@ -1763,7 +1781,7 @@ impl TabView {
                     }
                 });
             self.navigate(target);
-            ui.focus(&self.pid("file-list"));
+            ui.focus(self.pid("file-list"));
         }
         let path = path
             .el
@@ -1782,7 +1800,11 @@ impl TabView {
             real,
             false,
         );
-        let mut toolbar_items = vec![nav_back, nav_forward, nav_up, places, path];
+        let mut toolbar_items = vec![nav_back, nav_forward, nav_up];
+        if !self.secondary() {
+            toolbar_items.push(places);
+        }
+        toolbar_items.push(path);
         #[cfg(target_os = "linux")]
         if let Some(clipboard) = &jobs.file_clipboard {
             toolbar_items.push(action(
@@ -1794,7 +1816,9 @@ impl TabView {
                 false,
             ));
         }
-        toolbar_items.extend([find_action, inspector]);
+        if !self.secondary() {
+            toolbar_items.extend([find_action, inspector]);
+        }
         let toolbar = row(toolbar_items)
             .gap(3)
             .pad((6, 5))
@@ -2280,7 +2304,7 @@ impl TabView {
             .min_w(0)
             .w(pct(100))
             .clip();
-        let filter = text_input(ui, &self.pid("filter-input"), &mut self.filter);
+        let filter = text_input(ui, self.pid("filter-input"), &mut self.filter);
         if real && filter.changed {
             if let Some(b) = self.browser.as_mut() {
                 b.set_filter(&self.filter);
@@ -2326,16 +2350,22 @@ impl TabView {
         .align(Align::Center)
         .fill(chrome())
         .w(pct(100));
-        let mut regions = vec![
-            tabs,
-            hairline(),
-            toolbar,
-            crumbs,
-            hairline(),
-            panes,
-            hairline(),
-            status,
-        ];
+        let mut regions = if self.secondary() {
+            vec![toolbar]
+        } else {
+            vec![tabs, hairline(), toolbar]
+        };
+        regions.extend([crumbs, hairline(), panes, hairline(), status]);
+        if self.secondary() {
+            return col(regions)
+                .w(pct(100))
+                .h(pct(100))
+                .min_w(0)
+                .min_h(0)
+                .fill(ground())
+                .id(self.pid("browser-root"))
+                .named("Second file browser");
+        }
         if let Some(clipboard_status) = jobs.clipboard_status(ui) {
             regions.extend([hairline(), clipboard_status]);
         }

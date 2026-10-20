@@ -34,6 +34,9 @@ pub(super) enum Cmd {
     ToggleGrid,
     CopyPath,
     OpenTerminal,
+    ToggleSplit,
+    CopyToOther,
+    MoveToOther,
 }
 pub(super) const COMMANDS: &[(Cmd, &str, &str)] = &[
     (Cmd::Open, "Open", "Enter"),
@@ -51,6 +54,9 @@ pub(super) const COMMANDS: &[(Cmd, &str, &str)] = &[
     (Cmd::Cut, "Cut", "Ctrl+X"),
     (Cmd::Copy, "Copy", "Ctrl+C"),
     (Cmd::Paste, "Paste", "Ctrl+V"),
+    (Cmd::ToggleSplit, "Toggle split view", "Ctrl+\\"),
+    (Cmd::CopyToOther, "Copy to other pane", "F5"),
+    (Cmd::MoveToOther, "Move to other pane", "F6"),
     (Cmd::SelectAll, "Select all", "Ctrl+A"),
     (Cmd::ToggleHidden, "Show or hide hidden files", "Ctrl+H"),
     (Cmd::SortName, "Sort by name", ""),

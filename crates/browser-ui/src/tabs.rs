@@ -6,6 +6,9 @@ pub struct BrowserView {
     pub(super) workspace: Workspace<TabView>,
     palette: Option<palette::Palette>,
     pub(super) jobs: AppJobs,
+    /// Second pane of a split view, and whether it holds the keyboard.
+    pane_b: Option<TabView>,
+    b_active: bool,
 }
 
 impl BrowserView {
@@ -20,6 +23,8 @@ impl BrowserView {
         Self {
             workspace,
             palette: None,
+            pane_b: None,
+            b_active: false,
             jobs: AppJobs {
                 places: places::Places::load(),
                 settings,
@@ -106,6 +111,14 @@ impl BrowserView {
         }
         // Workspace count is bounded. Destinations are native paths captured by
         // accepted jobs; refresh all matching tabs, independent of active index.
+        if let Some(tab) = &mut self.pane_b
+            && let Some(browser) = &mut tab.browser
+            && refresh.iter().any(|d| browser.path() == d)
+        {
+            browser.navigate(browser.path().to_path_buf());
+            tab.reset_listing();
+            changed = true;
+        }
         let ids: Vec<_> = self.workspace.tabs().map(|(id, _)| id).collect();
         for id in ids {
             let tab = self.workspace.get_mut(id).expect("enumerated live tab");
@@ -167,6 +180,13 @@ impl BrowserView {
     }
     fn run_command(&mut self, ui: &mut Ui, cmd: palette::Cmd) {
         use palette::Cmd;
+        match cmd {
+            Cmd::ToggleSplit => return self.toggle_split(ui),
+            Cmd::CopyToOther | Cmd::MoveToOther => {
+                return self.send_to_other(cmd == Cmd::MoveToOther);
+            }
+            _ => {}
+        }
         let intent = match cmd {
             Cmd::NewTab => Some(TabIntent::New),
             Cmd::CloseTab => self.workspace.active().map(TabIntent::Close),
@@ -177,6 +197,9 @@ impl BrowserView {
         };
         if let Some(intent) = intent {
             self.apply_tab_intent(ui, intent);
+        } else if let Some(tab) = self.pane_b.as_mut().filter(|_| self.b_active) {
+            ui.focus(tab.pid("file-list"));
+            tab.run_command(ui, &mut self.jobs, cmd);
         } else if let Some(id) = self.workspace.active() {
             ui.focus("file-list");
             self.workspace
@@ -184,6 +207,49 @@ impl BrowserView {
                 .expect("active tab is live")
                 .run_command(ui, &mut self.jobs, cmd);
         }
+    }
+    fn toggle_split(&mut self, ui: &mut Ui) {
+        if self.pane_b.take().is_some() {
+            self.b_active = false;
+            ui.focus("file-list");
+        } else if let Some(path) = self
+            .workspace
+            .active()
+            .and_then(|id| self.workspace.get(id).ok())
+            .and_then(TabView::location)
+        {
+            let mut pane = TabView::new(path);
+            pane.apply_settings(&self.jobs.settings);
+            pane.pfx = "b/";
+            pane.active_pane = false;
+            self.pane_b = Some(pane);
+        }
+        ui.discard_input_for_view_change();
+        self.jobs.geometry_changed = true;
+    }
+    /// F5/F6: the focused pane's selection goes to the other pane's folder.
+    fn send_to_other(&mut self, mv: bool) {
+        let Some(b) = self.pane_b.as_mut() else {
+            return;
+        };
+        let (from, to) = if self.b_active {
+            (
+                b,
+                self.workspace
+                    .active()
+                    .and_then(|id| self.workspace.get_mut(id).ok()),
+            )
+        } else {
+            let a = self
+                .workspace
+                .active()
+                .and_then(|id| self.workspace.get_mut(id).ok());
+            (a.expect("active tab is live"), Some(b))
+        };
+        let Some(dest) = to.and_then(|t| t.location()) else {
+            return;
+        };
+        from.send_to(&mut self.jobs, dest, mv);
     }
     fn apply_tab_intent(&mut self, ui: &mut Ui, intent: TabIntent) {
         let changed = match intent {
@@ -337,6 +403,19 @@ impl View for BrowserView {
         {
             self.palette = Some(palette::Palette::open());
         }
+        let press = ui
+            .shortcuts()
+            .iter()
+            .map(|p| (p.key, p.mods.ctrl || p.mods.cmd))
+            .collect::<Vec<_>>();
+        for (key, ctrl) in press {
+            match key {
+                Key::Char('\\') if ctrl => self.run_command(ui, palette::Cmd::ToggleSplit),
+                Key::Function(5) => self.run_command(ui, palette::Cmd::CopyToOther),
+                Key::Function(6) => self.run_command(ui, palette::Cmd::MoveToOther),
+                _ => {}
+            }
+        }
         if let Some(intent) = self.tab_intent(ui) {
             self.apply_tab_intent(ui, intent);
         }
@@ -381,9 +460,25 @@ impl View for BrowserView {
         }
         if let Some(id) = self.workspace.active() {
             let tab = self.workspace.get_mut(id).expect("active tab is live");
-            let tree = tab.build(ui, &mut self.jobs, Some(strip));
+            tab.active_pane = !self.b_active;
+            let mut tree = tab.build(ui, &mut self.jobs, Some(strip));
             if std::mem::take(&mut tab.context_requested) {
                 self.palette = Some(palette::Palette::context());
+            }
+            if let Some(b) = &mut self.pane_b {
+                b.active_pane = self.b_active;
+                let right = b.build(ui, &mut self.jobs, None);
+                if std::mem::take(&mut b.context_requested) {
+                    self.palette = Some(palette::Palette::context());
+                }
+                tree = row([
+                    tree.grow(1).basis(0).min_w(0).h(pct(100)),
+                    block(1, 0).h(pct(100)).fill(line()).shrink(0),
+                    right.grow(1).basis(0).min_w(0).h(pct(100)),
+                ])
+                .w(pct(100))
+                .h(pct(100))
+                .min_h(0);
             }
             return match palette_el {
                 Some(el) => col([el, tree.grow(1).basis(0).min_h(0)])
@@ -434,6 +529,9 @@ impl View for BrowserView {
                 .expect("enumerated live tab")
                 .changed();
         }
+        if let Some(b) = &mut self.pane_b {
+            changed |= b.changed();
+        }
         changed
     }
     fn request_resize(&mut self, _: u32, _: u32) -> bool {
@@ -468,6 +566,14 @@ impl View for BrowserView {
             panel.after_frame(ui);
             return;
         }
+        if self.pane_b.is_some()
+            && let Some(key) = ui.focus_key()
+        {
+            self.b_active = key.starts_with("b/");
+        }
+        if let Some(b) = &mut self.pane_b {
+            b.after_frame(ui);
+        }
         if let Some(id) = self.workspace.active() {
             self.workspace
                 .get_mut(id)
@@ -489,6 +595,8 @@ impl View for BrowserView {
                 | Key::Escape
                 | Key::Delete
                 | Key::Function(2)
+                | Key::Function(5)
+                | Key::Function(6)
                 | Key::Left
                 | Key::Right
                 | Key::Tab
@@ -524,6 +632,7 @@ impl View for BrowserView {
                             | 'H'
                             | 'p'
                             | 'P'
+                            | '\\'
                             | 'g'
                             | 'G'
                     )
