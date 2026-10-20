@@ -4,7 +4,7 @@
 use browser_core::selection::{
     Action as SelectAction, ListingRevision, Modifiers as SelectMods, Movement, Selection,
 };
-use browser_core::{Browser, EntryKind, LoadState};
+use browser_core::{Browser, EntryKind, LoadState, SortKey, SortOrder};
 use mui::host::View;
 use mui::prelude::*;
 use std::io::Read;
@@ -504,6 +504,21 @@ impl TabView {
             clipboard.read_for_paste(browser.path().to_path_buf());
         }
     }
+    fn sort_by(&mut self, key: SortKey) {
+        let Some(browser) = self.browser.as_mut() else {
+            return;
+        };
+        let current = browser.sort();
+        browser.set_sort(SortOrder {
+            key,
+            descending: if current.key == key {
+                !current.descending
+            } else {
+                matches!(key, SortKey::Size | SortKey::Modified)
+            },
+        });
+        self.reset_listing();
+    }
     fn open_rename(&mut self, jobs: &mut AppJobs) {
         if jobs.mutations_busy() {
             return;
@@ -623,6 +638,7 @@ impl TabView {
                 path: e.path.to_string_lossy().into_owned(),
                 kind: e.kind,
                 size: e.size,
+                modified: e.modified,
             })
     }
     fn activate(&mut self, index: usize) {
@@ -1053,6 +1069,7 @@ struct RowInfo {
     path: String,
     kind: EntryKind,
     size: Option<u64>,
+    modified: Option<std::time::SystemTime>,
 }
 impl RowInfo {
     fn kind_label(&self) -> &'static str {
@@ -1100,7 +1117,31 @@ fn fixture_row(index: usize) -> RowInfo {
         } else {
             Some((index as u64 + 1) * 12_947)
         },
+        modified: Some(
+            std::time::UNIX_EPOCH
+                + std::time::Duration::from_secs(1_760_000_000 + index as u64 * 3_600),
+        ),
     }
+}
+/// ponytail: UTC; local time needs a tz database, add when users ask.
+fn date(time: std::time::SystemTime) -> String {
+    let secs = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let (days, rem) = ((secs / 86_400) as i64 + 719_468, secs % 86_400);
+    let era = days.div_euclid(146_097);
+    let doe = days.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}",
+        rem / 3600,
+        rem % 3600 / 60
+    )
 }
 fn bytes(size: u64) -> String {
     if size >= 1_073_741_824 {
@@ -1140,6 +1181,16 @@ impl TabView {
             return jobs.with_mutation_status(ui, tree);
         }
         self.refresh();
+        for (id, key) in [
+            ("sort-name", SortKey::Name),
+            ("sort-kind", SortKey::Kind),
+            ("sort-modified", SortKey::Modified),
+            ("sort-size", SortKey::Size),
+        ] {
+            if clicked(ui, id) {
+                self.sort_by(key);
+            }
+        }
         let discard_listing_input = std::mem::take(&mut self.discard_listing_input);
         if discard_listing_input && ui.focus_key().is_none_or(|id| id.starts_with("file-list")) {
             ui.focus("file-list");
@@ -1344,27 +1395,54 @@ impl TabView {
                 .w(pct(100))
         });
         let wide_columns = self.viewport.width >= 500.;
-        let header = if wide_columns {
-            row([
-                detail("Name").grow(1).basis(0).min_w(0),
-                detail("Type").reserve("Symbolic link").min_w(94),
-                detail("Size")
-                    .reserve("999.9 MB")
-                    .min_w(78)
-                    .align_self(Align::End),
-            ])
-            .gap(12)
-        } else {
-            row([
-                detail("Name").grow(1).basis(0).min_w(0),
-                detail("Size").reserve("999.9 MB").min_w(78),
-            ])
-            .gap(12)
+        let modified_column = self.viewport.width >= 700.;
+        let current = self.browser.as_ref().map(Browser::sort).unwrap_or_default();
+        let head = |ui: &Ui, key: SortKey, id: &str, title: &str| {
+            let arrow = match (current.key == key, current.descending) {
+                (true, false) => " ▲",
+                (true, true) => " ▼",
+                _ => "",
+            };
+            row([detail(format!("{title}{arrow}"))])
+                .id(id)
+                .a11y(A11y::Button)
+                .named(format!("Sort by {title}"))
+                .focusable()
+                .cursor(Cursor::Hand)
+                .when(ui.get(id).hovered, |e| e.fill(color(0x293235)))
+        };
+        let mut head_cells = vec![
+            head(ui, SortKey::Name, "sort-name", "Name")
+                .grow(1)
+                .basis(0)
+                .min_w(0),
+        ];
+        if wide_columns {
+            head_cells.push(
+                head(ui, SortKey::Kind, "sort-kind", "Type")
+                    .reserve("Symbolic link")
+                    .min_w(94),
+            );
         }
-        .pad((12, 7))
-        .fill(chrome())
-        .w(pct(100))
-        .shrink(0);
+        if modified_column {
+            head_cells.push(
+                head(ui, SortKey::Modified, "sort-modified", "Modified")
+                    .reserve("0000-00-00 00:00")
+                    .min_w(118),
+            );
+        }
+        head_cells.push(
+            head(ui, SortKey::Size, "sort-size", "Size")
+                .reserve("999.9 MB")
+                .min_w(78)
+                .align_self(Align::End),
+        );
+        let header = row(head_cells)
+            .gap(12)
+            .pad((12, 7))
+            .fill(chrome())
+            .w(pct(100))
+            .shrink(0);
         if self.list.len() != self.count() {
             self.reset_listing();
         }
@@ -1395,6 +1473,7 @@ impl TabView {
                         path: e.path.to_string_lossy().into_owned(),
                         kind: e.kind,
                         size: e.size,
+                        modified: e.modified,
                     }
                 };
                 let interaction = ui.get(&item.id);
@@ -1449,6 +1528,14 @@ impl TabView {
                             .when(active, |e| e.fill(selected_ink()))
                             .min_w(94)
                             .reserve("Symbolic link"),
+                    );
+                }
+                if modified_column {
+                    cells.push(
+                        detail(info.modified.map_or_else(|| "—".into(), date))
+                            .when(active, |e| e.fill(selected_ink()))
+                            .min_w(118)
+                            .reserve("0000-00-00 00:00"),
                     );
                 }
                 cells.push(size);

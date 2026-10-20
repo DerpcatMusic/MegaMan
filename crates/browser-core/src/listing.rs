@@ -542,8 +542,9 @@ mod tests {
         let mut browser = Browser {
             path: PathBuf::from("synthetic"),
             snapshot: None,
-            state: LoadState::Loading,
             filter: String::new(),
+            sort: crate::SortOrder::default(),
+            state: LoadState::Loading,
             history: vec![PathBuf::from("synthetic")],
             history_index: 0,
             location_revision: 0,
@@ -560,6 +561,7 @@ mod tests {
             path,
             kind: EntryKind::File,
             size: None,
+            modified: None,
         }
     }
     fn wait_until(mut predicate: impl FnMut() -> bool) {
