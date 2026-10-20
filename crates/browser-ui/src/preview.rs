@@ -1,6 +1,10 @@
 //! Bounded inspector previews: UTF-8 text heads and downscaled images, decoded on a worker.
 use super::*;
-use std::sync::{Arc, mpsc};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+    mpsc,
+};
 
 const TEXT_BYTES: usize = 8 * 1024;
 const TEXT_LINES: usize = 24;
@@ -12,9 +16,49 @@ pub(super) enum Content {
     Text(String),
     Image(Arc<Image>),
     Unavailable(&'static str),
+    Folder(FolderTotals),
+}
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct FolderTotals {
+    files: u64,
+    folders: u64,
+    bytes: u64,
+    /// Walk stopped at the entry cap, was cancelled, or hit unreadable directories.
+    incomplete: bool,
+}
+const MAX_WALK: u64 = 2_000_000;
+
+/// Iterative, symlink-safe size walk. Stops at the entry cap or on cancellation.
+fn walk(root: &FsPath, cancel: &AtomicBool) -> FolderTotals {
+    let mut totals = FolderTotals::default();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            totals.incomplete = true;
+            continue;
+        };
+        for entry in entries.flatten() {
+            if cancel.load(Ordering::Relaxed) || totals.files + totals.folders >= MAX_WALK {
+                totals.incomplete = true;
+                return totals;
+            }
+            let Ok(meta) = entry.metadata() else {
+                totals.incomplete = true;
+                continue;
+            };
+            if meta.is_dir() {
+                totals.folders += 1;
+                pending.push(entry.path());
+            } else {
+                totals.files += 1;
+                totals.bytes += meta.len();
+            }
+        }
+    }
+    totals
 }
 enum State {
-    Loading(mpsc::Receiver<Content>),
+    Loading(mpsc::Receiver<Content>, Arc<AtomicBool>),
     Ready(Content),
 }
 #[derive(Default)]
@@ -30,7 +74,13 @@ fn is_image(path: &FsPath) -> bool {
         )
     })
 }
-fn load(path: &FsPath) -> Content {
+fn load(path: &FsPath, cancel: &AtomicBool) -> Content {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return Content::Unavailable("Cannot read this file.");
+    };
+    if meta.is_dir() {
+        return Content::Folder(walk(path, cancel));
+    }
     let Ok(meta) = std::fs::metadata(path) else {
         return Content::Unavailable("Cannot read this file.");
     };
@@ -99,21 +149,32 @@ impl Preview {
     /// Start loading `path` unless it is already current. `None` clears.
     pub(super) fn show(&mut self, path: Option<&FsPath>) {
         match path {
-            None => self.current = None,
+            None => {
+                self.cancel_current();
+                self.current = None;
+            }
             Some(p) if self.current.as_ref().is_some_and(|(c, _)| c == p) => {}
             Some(p) => {
                 let (tx, rx) = mpsc::channel();
                 let owned = p.to_path_buf();
+                let cancel = Arc::new(AtomicBool::new(false));
+                let flag = Arc::clone(&cancel);
                 std::thread::spawn(move || {
-                    let _ = tx.send(load(&owned));
+                    let _ = tx.send(load(&owned, &flag));
                 });
-                self.current = Some((p.to_path_buf(), State::Loading(rx)));
+                self.cancel_current();
+                self.current = Some((p.to_path_buf(), State::Loading(rx, cancel)));
             }
+        }
+    }
+    fn cancel_current(&self) {
+        if let Some((_, State::Loading(_, cancel))) = &self.current {
+            cancel.store(true, Ordering::Relaxed);
         }
     }
     pub(super) fn poll(&mut self) -> bool {
         if let Some((_, state)) = &mut self.current
-            && let State::Loading(rx) = state
+            && let State::Loading(rx, _) = state
         {
             match rx.try_recv() {
                 Ok(content) => {
@@ -132,7 +193,16 @@ impl Preview {
     pub(super) fn view(&self, width: f64) -> Option<El> {
         let (_, state) = self.current.as_ref()?;
         Some(match state {
-            State::Loading(_) => detail("Loading preview…").pad(14),
+            State::Loading(..) => detail("Loading preview…").pad(14),
+            State::Ready(Content::Folder(t)) => detail(format!(
+                "{} files · {} folders · {}{}",
+                t.files,
+                t.folders,
+                bytes(t.bytes),
+                if t.incomplete { " (partial)" } else { "" }
+            ))
+            .wrap()
+            .pad(14),
             State::Ready(Content::Unavailable(why)) => detail(*why).wrap().pad(14),
             State::Ready(Content::Text(text)) => col([label(text.clone()).wrap().w(pct(100))])
                 .pad(14)
@@ -153,6 +223,7 @@ impl Preview {
 #[cfg(test)]
 mod tests {
     use super::*;
+    static NO: AtomicBool = AtomicBool::new(false);
     fn tmp(name: &str, bytes: &[u8]) -> PathBuf {
         let p = std::env::temp_dir().join(format!("preview-{}-{name}", std::process::id()));
         std::fs::write(&p, bytes).unwrap();
@@ -162,24 +233,42 @@ mod tests {
     fn text_binary_empty_and_image_are_classified_and_bounded() {
         let long = "line\n".repeat(100);
         let p = tmp("a.txt", long.as_bytes());
-        let Content::Text(t) = load(&p) else {
+        let Content::Text(t) = load(&p, &NO) else {
             panic!("text")
         };
         assert_eq!(t.lines().count(), TEXT_LINES);
         let p = tmp("b.bin", b"abc\0def");
-        assert!(matches!(load(&p), Content::Unavailable(_)));
+        assert!(matches!(load(&p, &NO), Content::Unavailable(_)));
         let p = tmp("c.txt", b"");
-        assert!(matches!(load(&p), Content::Unavailable("Empty file.")));
+        assert!(matches!(load(&p, &NO), Content::Unavailable("Empty file.")));
         let mut png = Vec::new();
         image::DynamicImage::new_rgba8(1000, 500)
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .unwrap();
         let p = tmp("d.png", &png);
-        let Content::Image(img) = load(&p) else {
+        let Content::Image(img) = load(&p, &NO) else {
             panic!("image")
         };
         assert_eq!((img.width, img.height), (512, 256));
         let p = tmp("e.png", b"not a png");
-        assert!(matches!(load(&p), Content::Unavailable(_)));
+        assert!(matches!(load(&p, &NO), Content::Unavailable(_)));
+    }
+    #[test]
+    fn folder_walk_counts_without_following_symlinks_and_honours_cancel() {
+        let d = std::env::temp_dir().join(format!("walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("a/b")).unwrap();
+        std::fs::write(d.join("a/f1"), b"12345").unwrap();
+        std::fs::write(d.join("a/b/f2"), b"123").unwrap();
+        std::os::unix::fs::symlink(&d, d.join("loop")).unwrap();
+        let t = walk(&d, &NO);
+        assert_eq!(
+            (t.files, t.folders, t.bytes, t.incomplete),
+            (3, 2, 8 + t.bytes - 8, false)
+        );
+        assert!(t.bytes >= 8);
+        let stop = AtomicBool::new(true);
+        assert!(walk(&d, &stop).incomplete);
+        std::fs::remove_dir_all(d).unwrap();
     }
 }

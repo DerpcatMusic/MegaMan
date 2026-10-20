@@ -1186,7 +1186,7 @@ impl TabView {
                 {
                     "Press Enter or double-click to browse this ZIP."
                 } else {
-                    "Folders and special files have no preview."
+                    "Special files have no preview."
                 })
                 .wrap()
                 .pad(14),
@@ -1357,7 +1357,7 @@ impl TabView {
             .selected
             .filter(|_| self.show_inspector && self.fixture_count.is_none())
             .and_then(|i| self.browser.as_ref()?.entries().get(i))
-            .filter(|e| e.kind == EntryKind::File)
+            .filter(|e| matches!(e.kind, EntryKind::File | EntryKind::Directory))
             .map(|e| e.path.clone());
         self.preview.show(preview_path.as_deref());
         for (id, key) in [
