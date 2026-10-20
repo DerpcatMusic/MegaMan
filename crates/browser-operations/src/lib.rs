@@ -11,6 +11,8 @@ use std::{
 };
 
 #[cfg(target_os = "linux")]
+pub mod fsops;
+#[cfg(target_os = "linux")]
 pub mod journal;
 #[cfg(target_os = "linux")]
 mod linux;

@@ -10,6 +10,7 @@ pub(super) struct AppJobs {
     pub(super) extraction: Option<ExtractionUi>,
     #[cfg(target_os = "linux")]
     pub(super) copy_transfers: Option<transfers::TransfersUi>,
+    pub(super) fileops: fileops::FileOps,
     pub(super) copy_return_pending: bool,
     pub(super) geometry_changed: bool,
     // The built tree and the source of current host input are deliberately
@@ -35,7 +36,8 @@ impl AppJobs {
         "null".into()
     }
     pub(super) fn mutations_busy(&self) -> bool {
-        let extraction_busy = self.extraction.as_ref().is_some_and(ExtractionUi::busy);
+        let extraction_busy =
+            self.extraction.as_ref().is_some_and(ExtractionUi::busy) || self.fileops.busy();
         #[cfg(target_os = "linux")]
         return extraction_busy
             || self
@@ -246,20 +248,20 @@ impl AppJobs {
         }
     }
 
-    pub(super) fn poll(&mut self) -> (bool, [Option<PathBuf>; 2]) {
-        let mut changed = self.poll_file_clipboard();
-        let mut refresh = [None, None];
+    pub(super) fn poll(&mut self) -> (bool, Vec<PathBuf>) {
+        let mut changed = self.poll_file_clipboard() | self.fileops.poll();
+        let mut refresh = self.fileops.take_refresh();
         if let Some(extraction) = &mut self.extraction {
             changed |= extraction.poll();
             if let Some(parent) = extraction.take_refresh_parent() {
-                refresh[0] = Some(parent);
+                refresh.push(parent);
             }
         }
         #[cfg(target_os = "linux")]
         if let Some(copy) = &mut self.copy_transfers {
             changed |= copy.poll();
             if let Some(destination) = copy.take_refresh_destination() {
-                refresh[1] = Some(destination);
+                refresh.push(destination);
             }
         }
         changed |= std::mem::take(&mut self.geometry_changed);

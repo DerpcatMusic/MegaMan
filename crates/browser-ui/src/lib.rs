@@ -11,6 +11,7 @@ use std::io::Read;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::OnceLock;
 
+mod fileops;
 mod jobs;
 use jobs::AppJobs;
 mod tabs;
@@ -486,6 +487,41 @@ impl TabView {
             clipboard.read_for_paste(browser.path().to_path_buf());
         }
     }
+    fn open_rename(&mut self, jobs: &mut AppJobs) {
+        if jobs.mutations_busy() {
+            return;
+        }
+        let entry = self
+            .selected
+            .zip(self.browser.as_ref())
+            .and_then(|(index, b)| b.entries().get(index));
+        if let Some(entry) = entry {
+            jobs.fileops.open_prompt(
+                fileops::PromptKind::Rename(entry.path.clone()),
+                entry.name.to_string_lossy().into_owned(),
+            );
+        }
+    }
+    fn open_create(&mut self, jobs: &mut AppJobs, folder: bool) {
+        if jobs.mutations_busy() {
+            return;
+        }
+        if let Some(b) = self
+            .browser
+            .as_ref()
+            .filter(|b| matches!(b.state(), LoadState::Complete))
+        {
+            let dir = b.path().to_path_buf();
+            jobs.fileops.open_prompt(
+                if folder {
+                    fileops::PromptKind::NewFolder(dir)
+                } else {
+                    fileops::PromptKind::NewFile(dir)
+                },
+                if folder { "New folder" } else { "New file" }.into(),
+            );
+        }
+    }
     fn count(&self) -> usize {
         self.fixture_count
             .unwrap_or_else(|| self.browser.as_ref().map_or(0, |b| b.entries().len()))
@@ -633,6 +669,15 @@ impl TabView {
                 } else if control && matches!(press.key, Key::Char('v' | 'V')) {
                     #[cfg(target_os = "linux")]
                     self.paste_files(jobs);
+                } else if !control && press.key == Key::Delete {
+                    let snapshot = self.browser.as_ref().and_then(Browser::snapshot);
+                    jobs.fileops.trash_selection(snapshot, &self.selection);
+                } else if !control && press.key == Key::Function(2) {
+                    self.open_rename(jobs);
+                } else if control && matches!(press.key, Key::Char('z' | 'Z')) {
+                    jobs.fileops.undo_last();
+                } else if control && matches!(press.key, Key::Char('n' | 'N')) {
+                    self.open_create(jobs, press.mods.shift);
                 } else if control && press.key == Key::Space {
                     self.apply_selection(SelectAction::ToggleCursor, false);
                 } else if !control
@@ -656,6 +701,7 @@ impl TabView {
                 }
             }
             if press.key == Key::Escape {
+                jobs.fileops.cancel_prompt();
                 self.apply_selection(SelectAction::Clear, false);
                 ui.focus("file-list");
             }
@@ -1568,6 +1614,9 @@ impl TabView {
         ];
         if let Some(clipboard_status) = jobs.clipboard_status(ui) {
             regions.extend([hairline(), clipboard_status]);
+        }
+        if let Some(row) = jobs.fileops.build(ui) {
+            regions.extend([hairline(), row]);
         }
         #[cfg(target_os = "linux")]
         if jobs.file_clipboard.is_some() && real {
