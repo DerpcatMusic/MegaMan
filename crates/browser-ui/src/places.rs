@@ -96,6 +96,27 @@ pub(super) fn parse_mountinfo(text: &str) -> Vec<Volume> {
     volumes.dedup();
     volumes
 }
+/// Network and device mounts exposed by GVfs under `$XDG_RUNTIME_DIR/gvfs`.
+fn gvfs_mounts() -> Vec<Volume> {
+    let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").map(|d| Path::new(&d).join("gvfs")) else {
+        return Vec::new();
+    };
+    let mut found: Vec<Volume> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| Volume {
+            name: e
+                .file_name()
+                .to_string_lossy()
+                .replace(',', " ")
+                .replace("=", " "),
+            path: e.path(),
+        })
+        .collect();
+    found.sort_by(|a, b| a.path.cmp(&b.path));
+    found
+}
 fn unescape(field: &str) -> String {
     let (mut out, bytes) = (Vec::new(), field.as_bytes());
     let mut i = 0;
@@ -137,10 +158,12 @@ impl Places {
     pub(super) fn refresh_volumes(&self) {
         let slot = Arc::clone(&self.volumes);
         std::thread::spawn(move || {
-            if let Ok(text) = std::fs::read_to_string("/proc/self/mountinfo")
-                && let Ok(mut v) = slot.lock()
-            {
-                *v = parse_mountinfo(&text);
+            if let Ok(text) = std::fs::read_to_string("/proc/self/mountinfo") {
+                let mut volumes = parse_mountinfo(&text);
+                volumes.extend(gvfs_mounts());
+                if let Ok(mut v) = slot.lock() {
+                    *v = volumes;
+                }
             }
         });
     }
