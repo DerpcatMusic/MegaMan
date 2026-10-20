@@ -81,19 +81,23 @@ pub(super) const COMMANDS: &[(Cmd, &str, &str)] = &[
     ),
 ];
 /// Right-click menu, in display order.
-const CONTEXT: &[Cmd] = &[
-    Cmd::Open,
-    Cmd::Rename,
-    Cmd::Cut,
-    Cmd::Copy,
-    Cmd::Paste,
-    Cmd::Trash,
-    Cmd::Compress,
-    Cmd::NewFolder,
-    Cmd::NewFile,
-    Cmd::CopyPath,
-    Cmd::OpenTerminal,
-    Cmd::Bookmark,
+const CONTEXT: &[Option<Cmd>] = &[
+    Some(Cmd::Open),
+    None,
+    Some(Cmd::Cut),
+    Some(Cmd::Copy),
+    Some(Cmd::Paste),
+    Some(Cmd::Rename),
+    Some(Cmd::Trash),
+    None,
+    Some(Cmd::NewFolder),
+    Some(Cmd::NewFile),
+    Some(Cmd::Compress),
+    None,
+    Some(Cmd::CopyPath),
+    Some(Cmd::OpenTerminal),
+    Some(Cmd::Bookmark),
+    Some(Cmd::ToggleSplit),
 ];
 const SHOWN: usize = 8;
 
@@ -127,6 +131,8 @@ pub(super) fn matches(query: &str) -> Vec<(Cmd, &'static str, &'static str)> {
 #[derive(Default)]
 pub(super) struct Palette {
     menu: bool,
+    /// Where a context menu floats: the pointer position when it was requested.
+    pub(super) at: Point,
     query: String,
     selected: usize,
     focus: bool,
@@ -138,11 +144,15 @@ pub(super) enum Outcome {
 }
 impl Palette {
     /// A fixed context menu: no text field, Escape or a choice closes it.
-    pub(super) fn context() -> Self {
+    pub(super) fn context(at: Point) -> Self {
         Self {
             menu: true,
+            at,
             ..Self::default()
         }
+    }
+    pub(super) fn is_menu(&self) -> bool {
+        self.menu
     }
     pub(super) fn open() -> Self {
         Self {
@@ -156,7 +166,11 @@ impl Palette {
             outcome = Outcome::Close;
         }
         let mut items = Vec::new();
-        for (i, cmd) in CONTEXT.iter().enumerate() {
+        for (i, entry) in CONTEXT.iter().enumerate() {
+            let Some(cmd) = entry else {
+                items.push(block(0, 1).w(pct(100)).fill(line()).shrink(0));
+                continue;
+            };
             let Some((_, name, keys)) = COMMANDS.iter().find(|c| c.0 == *cmd) else {
                 continue;
             };
@@ -164,26 +178,44 @@ impl Palette {
             if clicked(ui, &id) {
                 outcome = Outcome::Run(*cmd);
             }
+            let badge = if keys.is_empty() {
+                spacer().w(0)
+            } else {
+                row([detail(*keys)])
+                    .pad((6, 2))
+                    .radius(4)
+                    .fill(ground())
+                    .shrink(0)
+            };
             items.push(
                 action(
                     ui,
                     &id,
                     name,
-                    row([label(*name).grow(1).min_w(0), detail(*keys)])
-                        .gap(16)
-                        .pad((10, 5))
+                    row([label(*name).grow(1).min_w(0), badge])
+                        .gap(24)
+                        .align(Align::Center)
+                        .pad((12, 6))
                         .w(pct(100)),
                     true,
                     false,
                 )
                 .w(pct(100))
-                .pad(0),
+                .pad(0)
+                .radius(4)
+                .fill(chrome())
+                .on(State::Hover, |s| s.fill(selected())),
             );
         }
         (
             col(items)
-                .w(pct(100))
+                .w(280)
+                .pad(4)
+                .radius(8)
                 .fill(chrome())
+                .stroke(line())
+                .stroke_width(1)
+                .elevation(Elevation::Floating)
                 .shrink(0)
                 .id("context-menu")
                 .named("Context menu"),
@@ -259,6 +291,10 @@ impl Palette {
                 .w(pct(100))
                 .fill(chrome())
                 .shrink(0)
+                .radius(8)
+                .stroke(line())
+                .stroke_width(1)
+                .elevation(Elevation::Floating)
                 .id("palette")
                 .named("Command palette"),
             outcome,
@@ -274,7 +310,12 @@ mod tests {
         assert_eq!(matches("")[0].0, Cmd::Open);
         assert_eq!(matches("rena")[0].0, Cmd::Rename);
         assert!(matches("zzzz").is_empty());
-        assert!(CONTEXT.iter().all(|c| COMMANDS.iter().any(|k| k.0 == *c)));
+        assert!(
+            CONTEXT
+                .iter()
+                .flatten()
+                .all(|c| COMMANDS.iter().any(|k| k.0 == *c))
+        );
         let names: Vec<_> = matches("new").iter().take(3).map(|c| c.1).collect();
         assert_eq!(names, ["New tab", "New folder", "New file"]);
         assert_eq!(

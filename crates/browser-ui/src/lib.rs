@@ -485,7 +485,7 @@ impl TabView {
                 .or_else(|| std::env::var_os("USERPROFILE"))
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("/")),
-            show_rail: false,
+            show_rail: true,
             show_inspector: true,
             inspector_width: 250.,
             rail_width: 174.,
