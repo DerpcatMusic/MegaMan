@@ -9,6 +9,8 @@ pub struct BrowserView {
     /// Second pane of a split view, and whether it holds the keyboard.
     pane_b: Option<TabView>,
     b_active: bool,
+    goto: Option<goto::Goto>,
+    catalog: goto::CatalogHandle,
 }
 
 impl BrowserView {
@@ -25,6 +27,8 @@ impl BrowserView {
             palette: None,
             pane_b: None,
             b_active: false,
+            goto: None,
+            catalog: goto::CatalogHandle::default(),
             jobs: AppJobs {
                 places: places::Places::load(),
                 settings,
@@ -182,6 +186,10 @@ impl BrowserView {
         use palette::Cmd;
         match cmd {
             Cmd::ToggleSplit => return self.toggle_split(ui),
+            Cmd::GoTo => {
+                self.goto = Some(goto::Goto::open(self.catalog.clone()));
+                return;
+            }
             Cmd::CopyToOther | Cmd::MoveToOther => {
                 return self.send_to_other(cmd == Cmd::MoveToOther);
             }
@@ -207,6 +215,37 @@ impl BrowserView {
                 .expect("active tab is live")
                 .run_command(ui, &mut self.jobs, cmd);
         }
+    }
+    /// Jump to a GoTo result: folders open, files are revealed in their folder.
+    fn go_to(&mut self, ui: &mut Ui, path: PathBuf, dir: bool, new_tab: bool) {
+        let folder = if dir {
+            path.clone()
+        } else {
+            path.parent()
+                .map_or_else(|| path.clone(), FsPath::to_path_buf)
+        };
+        if new_tab {
+            let mut tab = TabView::new(folder);
+            tab.apply_settings(&self.jobs.settings);
+            if !dir {
+                tab.reveal_path = Some(path);
+            }
+            let _ = self.workspace.create(tab, Activation::Foreground);
+        } else if let Some(tab) = if self.b_active {
+            self.pane_b.as_mut()
+        } else {
+            self.workspace
+                .active()
+                .and_then(|id| self.workspace.get_mut(id).ok())
+        } {
+            tab.navigate(folder);
+            if !dir {
+                tab.reveal_path = Some(path);
+            }
+        }
+        ui.discard_input_for_view_change();
+        ui.focus("file-list");
+        self.jobs.geometry_changed = true;
     }
     fn toggle_split(&mut self, ui: &mut Ui) {
         if self.pane_b.take().is_some() {
@@ -411,6 +450,7 @@ impl View for BrowserView {
         for (key, ctrl) in press {
             match key {
                 Key::Char('\\') if ctrl => self.run_command(ui, palette::Cmd::ToggleSplit),
+                Key::Char('k') if ctrl => self.run_command(ui, palette::Cmd::GoTo),
                 Key::Function(5) => self.run_command(ui, palette::Cmd::CopyToOther),
                 Key::Function(6) => self.run_command(ui, palette::Cmd::MoveToOther),
                 _ => {}
@@ -458,6 +498,19 @@ impl View for BrowserView {
                 }
             }
         }
+        let mut goto_el = None;
+        if let Some(goto) = &mut self.goto {
+            let (el, outcome) = goto.build(ui);
+            goto_el = Some(el);
+            match outcome {
+                goto::Outcome::Open => {}
+                goto::Outcome::Close => self.goto = None,
+                goto::Outcome::Go { path, dir, new_tab } => {
+                    self.goto = None;
+                    self.go_to(ui, path, dir, new_tab);
+                }
+            }
+        }
         if let Some(id) = self.workspace.active() {
             let tab = self.workspace.get_mut(id).expect("active tab is live");
             tab.active_pane = !self.b_active;
@@ -480,6 +533,7 @@ impl View for BrowserView {
                 .h(pct(100))
                 .min_h(0);
             }
+            let palette_el = palette_el.or(goto_el);
             return match palette_el {
                 Some(el) => col([el, tree.grow(1).basis(0).min_h(0)])
                     .w(pct(100))
@@ -497,6 +551,9 @@ impl View for BrowserView {
     }
     fn changed(&mut self) -> bool {
         let mut changed = self.poll_jobs();
+        if let Some(goto) = &mut self.goto {
+            changed |= goto.poll();
+        }
         if let Some(now) = self
             .workspace
             .active()
@@ -633,6 +690,7 @@ impl View for BrowserView {
                             | 'p'
                             | 'P'
                             | '\\'
+                            | 'k'
                             | 'g'
                             | 'G'
                     )

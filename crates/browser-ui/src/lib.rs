@@ -13,6 +13,7 @@ use std::sync::OnceLock;
 
 mod dirsize;
 mod fileops;
+mod goto;
 mod jobs;
 mod palette;
 mod places;
@@ -562,7 +563,7 @@ impl TabView {
                 let snap = snapshot();
                 jobs.fileops.compress_selection(snap, &self.selection);
             }
-            Cmd::ToggleSplit | Cmd::CopyToOther | Cmd::MoveToOther => {}
+            Cmd::GoTo | Cmd::ToggleSplit | Cmd::CopyToOther | Cmd::MoveToOther => {}
             Cmd::Undo => jobs.fileops.undo_last(),
             Cmd::Cut => {
                 let snap = snapshot();
