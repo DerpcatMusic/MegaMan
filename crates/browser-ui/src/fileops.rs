@@ -28,6 +28,8 @@ struct Done {
 pub(super) struct FileOps {
     prompt: Option<Prompt>,
     selecting: Option<Materialization>,
+    cutting: Option<Materialization>,
+    cut: Option<Vec<PathBuf>>,
     running: Option<mpsc::Receiver<Done>>,
     undo: Vec<Vec<Undo>>,
     message: Option<(String, bool)>,
@@ -40,7 +42,7 @@ fn parent_of(path: &FsPath) -> Option<PathBuf> {
 
 impl FileOps {
     pub(super) fn busy(&self) -> bool {
-        self.selecting.is_some() || self.running.is_some()
+        self.selecting.is_some() || self.cutting.is_some() || self.running.is_some()
     }
     pub(super) fn open_prompt(&mut self, kind: PromptKind, text: String) {
         self.message = None;
@@ -113,33 +115,101 @@ impl FileOps {
         });
         true
     }
-    /// Begin trashing the selection: materialize paths off-thread, then trash each.
-    pub(super) fn trash_selection(
+    fn materialize(
         &mut self,
         snapshot: Option<browser_core::listing::ListingSnapshot>,
         selection: &Selection,
-    ) {
-        if self.busy() {
-            return;
-        }
+        what: &str,
+    ) -> Option<Materialization> {
         if selection.count() == 0 {
-            self.message = Some(("Select files or folders to move to Trash.".into(), true));
-            return;
+            self.message = Some((format!("Select files or folders to {what}."), true));
+            return None;
         }
         let Some(snapshot) = snapshot else {
             self.message = Some(("Wait for the folder to finish loading.".into(), true));
-            return;
+            return None;
         };
         match snapshot
             .ticket(selection, TicketLimits::default())
             .and_then(|t| t.materialize(snapshot.revision(), MaterializeLimits::default()))
         {
             Ok(work) => {
-                self.selecting = Some(work);
                 self.message = Some(("Preparing selection…".into(), false));
+                Some(work)
             }
-            Err(error) => self.message = Some((format!("Cannot trash selection: {error:?}"), true)),
+            Err(error) => {
+                self.message = Some((format!("Cannot {what}: {error:?}"), true));
+                None
+            }
         }
+    }
+    /// Begin trashing the selection: materialize paths off-thread, then trash each.
+    pub(super) fn trash_selection(
+        &mut self,
+        snapshot: Option<browser_core::listing::ListingSnapshot>,
+        selection: &Selection,
+    ) {
+        if !self.busy() {
+            self.selecting = self.materialize(snapshot, selection, "move to Trash");
+        }
+    }
+    /// Remember the selection as cut; the next matching paste moves instead of copying.
+    pub(super) fn cut_selection(
+        &mut self,
+        snapshot: Option<browser_core::listing::ListingSnapshot>,
+        selection: &Selection,
+    ) {
+        if !self.busy() {
+            self.cut = None;
+            self.cutting = self.materialize(snapshot, selection, "cut");
+        }
+    }
+    /// True (and the cut is consumed) when `paths` is exactly the remembered cut set.
+    pub(super) fn take_cut_matching(&mut self, paths: &[PathBuf]) -> bool {
+        let mut a: Vec<_> = paths.iter().collect();
+        a.sort();
+        let matches = self.cut.as_ref().is_some_and(|cut| {
+            let mut b: Vec<_> = cut.iter().collect();
+            b.sort();
+            a == b
+        });
+        if matches {
+            self.cut = None;
+        }
+        matches
+    }
+    /// Move paths into `dest` on a worker. Same-filesystem only; never replaces.
+    pub(super) fn start_move(&mut self, paths: Vec<PathBuf>, dest: PathBuf) -> bool {
+        if self.busy() {
+            return false;
+        }
+        self.spawn("Moved", move || {
+            let mut done = Done {
+                undo: Vec::new(),
+                refresh: vec![dest.clone()],
+                failure: None,
+                verb: "Moved",
+            };
+            for path in &paths {
+                match fsops::move_into(path, &dest) {
+                    Ok(op) => {
+                        done.refresh.extend(parent_of(path));
+                        done.undo.push(op);
+                    }
+                    Err(e) => {
+                        let cross = e.raw_os_error == Some(18);
+                        done.failure = Some(if cross {
+                            "different filesystem; copy then delete instead".into()
+                        } else {
+                            e.to_string()
+                        });
+                        break;
+                    }
+                }
+            }
+            done
+        });
+        true
     }
     pub(super) fn undo_last(&mut self) {
         if self.busy() {
@@ -204,6 +274,21 @@ impl FileOps {
                 Err(error) => {
                     self.message = Some((format!("Cannot trash selection: {error:?}"), true));
                 }
+            }
+        }
+        if let Some(work) = &mut self.cutting
+            && let Some(result) = work.poll()
+        {
+            self.cutting = None;
+            changed = true;
+            match result {
+                Ok(paths) => {
+                    let paths = paths.into_paths();
+                    self.message =
+                        Some((format!("Cut {} items · paste to move", paths.len()), false));
+                    self.cut = Some(paths);
+                }
+                Err(error) => self.message = Some((format!("Cannot cut: {error:?}"), true)),
             }
         }
         if let Some(rx) = &self.running
@@ -356,6 +441,32 @@ mod tests {
         ops.undo_last();
         settle(&mut ops);
         assert!(!dir.join("a").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn matching_cut_moves_without_replacing_and_undo_returns_the_files() {
+        let dir = std::env::temp_dir().join(format!("fileops-move-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("dest")).unwrap();
+        std::fs::write(dir.join("a"), b"1").unwrap();
+        std::fs::write(dir.join("b"), b"2").unwrap();
+        std::fs::write(dir.join("dest/b"), b"keep").unwrap();
+        let mut ops = FileOps::default();
+        ops.cut = Some(vec![dir.join("a"), dir.join("b")]);
+        assert!(
+            !ops.take_cut_matching(&[dir.join("a")]),
+            "partial match is a copy"
+        );
+        assert!(ops.take_cut_matching(&[dir.join("b"), dir.join("a")]));
+        assert!(!ops.take_cut_matching(&[dir.join("a")]), "cut is consumed");
+        assert!(ops.start_move(vec![dir.join("a"), dir.join("b")], dir.join("dest")));
+        settle(&mut ops);
+        assert!(dir.join("dest/a").exists() && !dir.join("a").exists());
+        assert_eq!(std::fs::read(dir.join("dest/b")).unwrap(), b"keep");
+        assert!(dir.join("b").exists(), "conflicting source stays put");
+        ops.undo_last();
+        settle(&mut ops);
+        assert!(dir.join("a").exists() && !dir.join("dest/a").exists());
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

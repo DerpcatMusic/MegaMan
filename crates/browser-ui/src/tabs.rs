@@ -367,7 +367,20 @@ impl View for BrowserView {
             && matches!(
                 key,
                 Key::Char(
-                    'l' | 'f' | 'F' | 'a' | 'A' | 'c' | 'C' | 'v' | 'V' | 'z' | 'Z' | 'n' | 'N'
+                    'l' | 'f'
+                        | 'F'
+                        | 'a'
+                        | 'A'
+                        | 'c'
+                        | 'C'
+                        | 'v'
+                        | 'V'
+                        | 'x'
+                        | 'X'
+                        | 'z'
+                        | 'Z'
+                        | 'n'
+                        | 'N'
                 )
             ))
             || (mods.alt && matches!(key, Key::Left | Key::Right))

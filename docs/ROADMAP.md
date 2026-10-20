@@ -5,7 +5,7 @@ MegaMan is being built in verified increments. Existing functionality is experim
 - Tabs exist (Ctrl+T new, Ctrl+W close, Ctrl+Shift+T reopen, Ctrl+Tab cycle, click to switch); drag reordering, pinning and closed-tab history beyond location remain.
 - Add resizable split panels, saved workspaces, bookmarks, recents and volume navigation.
 - Complete native inbound/outbound drag/drop, Wayland clipboard/data-device support and platform context actions.
-- Extend safe operations: rename (F2), create (Ctrl+N / Ctrl+Shift+N), trash (Delete) and undo (Ctrl+Z) exist; move, cross-filesystem move, per-volume trash, conflict decisions and recovery remain.
+- Extend safe operations: cut (Ctrl+X) + paste moves on one filesystem; rename (F2), create (Ctrl+N / Ctrl+Shift+N), trash (Delete) and undo (Ctrl+Z) exist; move, cross-filesystem move, per-volume trash, conflict decisions and recovery remain.
 - Add previews, thumbnails, inspectors and file-opening integrations on bounded workers.
 - Extend archive workflows with password entry, creation, nested browsing, preview/drag staging, more formats and independent encryption interoperability tests.
 - Add watcher convergence, large-folder sorting/filtering, system-wide indexed finding and explicit incomplete-coverage feedback.

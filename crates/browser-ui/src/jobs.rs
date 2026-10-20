@@ -62,6 +62,8 @@ impl AppJobs {
         {
             let accepted = if self.mutations_busy() {
                 false
+            } else if self.fileops.take_cut_matching(&offer.paths) {
+                self.fileops.start_move(offer.paths, offer.destination)
             } else {
                 self.copy_transfers
                     .get_or_insert_with(transfers::TransfersUi::new)
