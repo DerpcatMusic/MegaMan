@@ -3,6 +3,7 @@ use super::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Cmd {
+    Open,
     NewTab,
     CloseTab,
     ReopenTab,
@@ -31,6 +32,7 @@ pub(super) enum Cmd {
     ToggleInspector,
 }
 pub(super) const COMMANDS: &[(Cmd, &str, &str)] = &[
+    (Cmd::Open, "Open", "Enter"),
     (Cmd::NewTab, "New tab", "Ctrl+T"),
     (Cmd::CloseTab, "Close tab", "Ctrl+W"),
     (Cmd::ReopenTab, "Reopen closed tab", "Ctrl+Shift+T"),
@@ -57,6 +59,18 @@ pub(super) const COMMANDS: &[(Cmd, &str, &str)] = &[
     (Cmd::GoForward, "Go forward", "Alt+Right"),
     (Cmd::Bookmark, "Bookmark this folder", "Ctrl+D"),
     (Cmd::ToggleInspector, "Toggle inspector", "Space"),
+];
+/// Right-click menu, in display order.
+const CONTEXT: &[Cmd] = &[
+    Cmd::Open,
+    Cmd::Rename,
+    Cmd::Cut,
+    Cmd::Copy,
+    Cmd::Paste,
+    Cmd::Trash,
+    Cmd::NewFolder,
+    Cmd::NewFile,
+    Cmd::Bookmark,
 ];
 const SHOWN: usize = 8;
 
@@ -89,6 +103,7 @@ pub(super) fn matches(query: &str) -> Vec<(Cmd, &'static str, &'static str)> {
 
 #[derive(Default)]
 pub(super) struct Palette {
+    menu: bool,
     query: String,
     selected: usize,
     focus: bool,
@@ -99,13 +114,63 @@ pub(super) enum Outcome {
     Run(Cmd),
 }
 impl Palette {
+    /// A fixed context menu: no text field, Escape or a choice closes it.
+    pub(super) fn context() -> Self {
+        Self {
+            menu: true,
+            ..Self::default()
+        }
+    }
     pub(super) fn open() -> Self {
         Self {
             focus: true,
             ..Self::default()
         }
     }
+    fn build_menu(&mut self, ui: &mut Ui) -> (El, Outcome) {
+        let mut outcome = Outcome::Open;
+        if ui.shortcuts().iter().any(|p| p.key == Key::Escape) {
+            outcome = Outcome::Close;
+        }
+        let mut items = Vec::new();
+        for (i, cmd) in CONTEXT.iter().enumerate() {
+            let Some((_, name, keys)) = COMMANDS.iter().find(|c| c.0 == *cmd) else {
+                continue;
+            };
+            let id = format!("context-{i}");
+            if clicked(ui, &id) {
+                outcome = Outcome::Run(*cmd);
+            }
+            items.push(
+                action(
+                    ui,
+                    &id,
+                    name,
+                    row([label(*name).grow(1).min_w(0), detail(*keys)])
+                        .gap(16)
+                        .pad((10, 5))
+                        .w(pct(100)),
+                    true,
+                    false,
+                )
+                .w(pct(100))
+                .pad(0),
+            );
+        }
+        (
+            col(items)
+                .w(pct(100))
+                .fill(chrome())
+                .shrink(0)
+                .id("context-menu")
+                .named("Context menu"),
+            outcome,
+        )
+    }
     pub(super) fn build(&mut self, ui: &mut Ui) -> (El, Outcome) {
+        if self.menu {
+            return self.build_menu(ui);
+        }
         if std::mem::take(&mut self.focus) {
             ui.focus("palette-input");
         }
@@ -154,7 +219,8 @@ impl Palette {
                     name,
                     row([label(*name).grow(1).min_w(0), detail(*keys)])
                         .gap(8)
-                        .pad((10, 5)),
+                        .pad((10, 5))
+                        .w(pct(100)),
                     true,
                     i == self.selected,
                 )
@@ -182,9 +248,10 @@ mod tests {
     use super::*;
     #[test]
     fn subsequence_matching_ranks_prefixes_first_and_rejects_non_matches() {
-        assert_eq!(matches("")[0].0, Cmd::NewTab);
+        assert_eq!(matches("")[0].0, Cmd::Open);
         assert_eq!(matches("rena")[0].0, Cmd::Rename);
         assert!(matches("zzzz").is_empty());
+        assert!(CONTEXT.iter().all(|c| COMMANDS.iter().any(|k| k.0 == *c)));
         let names: Vec<_> = matches("new").iter().take(3).map(|c| c.1).collect();
         assert_eq!(names, ["New tab", "New folder", "New file"]);
         assert_eq!(

@@ -397,6 +397,7 @@ struct TabView {
     archive: Option<ArchivePanel>,
     reveal_path: Option<PathBuf>,
     preview: preview::Preview,
+    context_requested: bool,
 }
 
 impl TabView {
@@ -473,6 +474,7 @@ impl TabView {
             archive: None,
             reveal_path: None,
             preview: preview::Preview::default(),
+            context_requested: false,
         }
     }
     #[cfg(target_os = "linux")]
@@ -514,6 +516,11 @@ impl TabView {
         use palette::Cmd;
         let snapshot = || self.browser.as_ref().and_then(Browser::snapshot);
         match cmd {
+            Cmd::Open => {
+                if let Some(index) = self.selected {
+                    self.activate(index);
+                }
+            }
             Cmd::NewFolder => self.open_create(jobs, true),
             Cmd::NewFile => self.open_create(jobs, false),
             Cmd::Rename => self.open_rename(jobs),
@@ -1626,6 +1633,7 @@ impl TabView {
         let discard_listing_input = discard_listing_input || self.discard_listing_input;
         let mut pending_activation = None;
         let mut pending_selection = None;
+        let mut context_request = false;
         let list = uniform_list(
             ui,
             &list_id,
@@ -1667,6 +1675,24 @@ impl TabView {
                         )
                         .expect("visible row belongs to current listing");
                     pending_selection = Some(item.index);
+                }
+                if !discard_listing_input
+                    && interaction.pressed
+                    && interaction.button == Some(Button::Secondary)
+                {
+                    if !selection.contains(&revision, item.index).unwrap_or(false) {
+                        selection
+                            .apply(
+                                &revision,
+                                SelectAction::Click {
+                                    index: item.index,
+                                    modifiers: SelectMods::default(),
+                                },
+                            )
+                            .expect("visible row belongs to current listing");
+                        pending_selection = Some(item.index);
+                    }
+                    context_request = true;
                 }
                 if !discard_listing_input && interaction.double_clicked {
                     pending_activation = Some(item.index);
@@ -1735,6 +1761,7 @@ impl TabView {
                     .clip()
             },
         );
+        self.context_requested |= context_request;
         self.rows_built = list.changed.rows_built;
         self.visible = list.changed.visible;
         if pending_selection.is_some() {
