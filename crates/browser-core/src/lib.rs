@@ -8,6 +8,8 @@
 
 pub mod listing;
 pub mod selection;
+#[cfg(target_os = "linux")]
+pub mod watch;
 pub mod workspace;
 pub use listing::ListingSnapshot;
 
