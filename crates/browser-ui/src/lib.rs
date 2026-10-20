@@ -625,6 +625,12 @@ impl TabView {
             .is_some_and(|at| std::time::Instant::now() >= at)
         {
             self.reload_at = None;
+            // Keep the focused item selected across the re-list (full multi-selection
+            // preservation would need path-keyed selection; documented limit).
+            self.reveal_path = self
+                .selected
+                .and_then(|i| self.browser.as_ref()?.entries().get(i))
+                .map(|e| e.path.clone());
             if let Some(b) = self.browser.as_mut() {
                 b.navigate(path);
             }
