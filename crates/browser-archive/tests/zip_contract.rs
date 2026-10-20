@@ -554,6 +554,49 @@ fn aes256_creation_password_failure_and_authentication() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn optional_password_field_can_supply_empty_aes_password_or_password_to_plain_zip() {
+    for aes256 in [false, true] {
+        let f = Fixture::new();
+        let source = f.put("source", b"optional password fixture");
+        let archive = f.path("archive.zip");
+        let cancel = Cancellation::default();
+        let ctl = control(&cancel);
+        create_new(
+            &[CreateSource::file(source, "payload")],
+            &archive,
+            &CreateOptions {
+                aes256,
+                ..CreateOptions::default()
+            },
+            aes256.then_some(b"".as_slice()),
+            Limits::default(),
+            &ctl,
+        )
+        .unwrap();
+        let session = ArchiveSession::open(&archive, Limits::default(), &ctl).unwrap();
+        let ids: Vec<_> = session.entries().iter().map(|e| e.id).collect();
+        if aes256 {
+            let error = extract_new(&session, &ids, &f.path("missing"), None, &ctl).unwrap_err();
+            assert_eq!(error.kind, ErrorKind::CredentialRequired);
+            assert!(!f.path("missing").exists());
+        }
+        let password = if aes256 {
+            b"".as_slice()
+        } else {
+            b"irrelevant optional field".as_slice()
+        };
+        let output = f.path("output");
+        extract_new(&session, &ids, &output, Some(password), &ctl).unwrap();
+        assert_eq!(
+            fs::read(output.join("payload")).unwrap(),
+            b"optional password fixture"
+        );
+        f.no_staging();
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn existing_destination_is_never_replaced() {
     let f = Fixture::new();
     let source = f.put("source", b"data");
