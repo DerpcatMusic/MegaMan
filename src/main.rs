@@ -210,7 +210,28 @@ fn run() -> Result<(), String> {
     Err("this build has no desktop host; use --fixture COUNT --snapshot PATH".into())
 }
 
+/// MUI's CPU-to-GPU handover stops presenting on some Wayland compositors (the window
+/// freezes), so presentation defaults to the CPU renderer; MEGAMAN_RENDERER=gpu opts in.
+#[cfg(unix)]
+fn prefer_cpu_renderer() {
+    use std::os::unix::process::CommandExt;
+    if std::env::var_os("MUI_RENDERER").is_some()
+        || std::env::var("MEGAMAN_RENDERER").is_ok_and(|v| v.eq_ignore_ascii_case("gpu"))
+    {
+        return;
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let error = std::process::Command::new(exe)
+            .args(std::env::args_os().skip(1))
+            .env("MUI_RENDERER", "cpu")
+            .exec();
+        eprintln!("megaman: could not select the CPU renderer: {error}");
+    }
+}
+
 fn main() {
+    #[cfg(unix)]
+    prefer_cpu_renderer();
     if let Err(error) = run() {
         eprintln!("megaman: {error}");
         std::process::exit(1);
