@@ -699,6 +699,14 @@ impl TabView {
                 } else if control && matches!(press.key, Key::Char('c' | 'C')) {
                     #[cfg(target_os = "linux")]
                     self.copy_selected_files(jobs);
+                } else if control && matches!(press.key, Key::Char('x' | 'X')) {
+                    let snapshot = self.browser.as_ref().and_then(Browser::snapshot);
+                    jobs.fileops
+                        .cut_selection(snapshot.clone(), &self.selection);
+                    #[cfg(target_os = "linux")]
+                    if let Some(clipboard) = &mut jobs.file_clipboard {
+                        clipboard.copy(snapshot, &self.selection);
+                    }
                 } else if control && matches!(press.key, Key::Char('v' | 'V')) {
                     #[cfg(target_os = "linux")]
                     self.paste_files(jobs);
