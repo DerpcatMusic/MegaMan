@@ -294,7 +294,41 @@ impl BrowserView {
     }
 }
 
+impl BrowserView {
+    /// Copy files dropped from other applications into the active tab's folder.
+    pub(super) fn admit_drops(&mut self) {
+        #[cfg(target_os = "linux")]
+        {
+            if self.jobs.dropped.is_empty() || self.jobs.mutations_busy() {
+                return;
+            }
+            let Some(folder) = self
+                .workspace
+                .active()
+                .and_then(|id| self.workspace.get(id).ok())
+                .and_then(|tab| tab.browser.as_ref())
+                .filter(|b| matches!(b.state(), LoadState::Complete))
+                .map(|b| b.path().to_path_buf())
+            else {
+                return;
+            };
+            let paths = std::mem::take(&mut self.jobs.dropped);
+            self.jobs
+                .copy_transfers
+                .get_or_insert_with(transfers::TransfersUi::new)
+                .start(paths, folder);
+            self.jobs.geometry_changed = true;
+        }
+    }
+}
 impl View for BrowserView {
+    /// Files dragged in from another application: accepted as a copy into the current folder.
+    fn drop_files(&mut self, _ui: &Ui, _at: Point, paths: &[PathBuf], dropped: bool) -> bool {
+        if dropped && self.jobs.dropped.len() < 10_000 {
+            self.jobs.dropped.extend(paths.iter().cloned());
+        }
+        true
+    }
     fn build(&mut self, ui: &mut Ui, input: &Input) -> El {
         if ui
             .shortcuts()
@@ -309,6 +343,7 @@ impl View for BrowserView {
         self.jobs.raw_extraction_owner = self.jobs.presented_extraction_owner;
         self.jobs.built_extraction_owner = None;
         self.poll_jobs();
+        self.admit_drops();
         let current_owner = self
             .jobs
             .extraction
@@ -587,6 +622,31 @@ mod tests {
         });
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn files_dropped_from_other_applications_copy_into_the_active_folder() {
+        let fixture = Fixture::new();
+        let source = fixture.0.join("outside");
+        let folder = fixture.0.join("here");
+        fs::create_dir(&folder).unwrap();
+        fs::write(&source, b"dropped payload").unwrap();
+        let mut view = BrowserView::new(folder.clone());
+        let ui = make_ui().unwrap();
+        settle_listings(&mut view);
+        assert!(view.drop_files(&ui, Point::default(), std::slice::from_ref(&source), false));
+        view.admit_drops();
+        assert!(
+            view.jobs.copy_transfers.is_none(),
+            "hover alone copies nothing"
+        );
+        assert!(view.drop_files(&ui, Point::default(), &[source], true));
+        view.admit_drops();
+        until(|| copy_complete(&mut view));
+        assert_eq!(
+            fs::read(folder.join("outside")).unwrap(),
+            b"dropped payload"
+        );
+    }
     #[test]
     fn captured_native_paste_survives_origin_close_and_empty_workspace() {
         let fixture = Fixture::new();

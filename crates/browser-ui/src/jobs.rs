@@ -11,6 +11,8 @@ pub(super) struct AppJobs {
     #[cfg(target_os = "linux")]
     pub(super) copy_transfers: Option<transfers::TransfersUi>,
     pub(super) fileops: fileops::FileOps,
+    /// Files dropped on the window from other applications, waiting for a free worker.
+    pub(super) dropped: Vec<PathBuf>,
     pub(super) places: places::Places,
     pub(super) settings: settings::Settings,
     pub(super) copy_return_pending: bool,
