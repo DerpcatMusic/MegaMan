@@ -377,6 +377,8 @@ pub fn make_ui() -> Result<Ui, String> {
 struct TabView {
     browser: Option<Browser>,
     fixture_count: Option<usize>,
+    /// Type-to-select buffer and when its last letter arrived.
+    ahead: (String, Option<std::time::Instant>),
     list: ListState,
     path_text: String,
     filter: String,
@@ -438,6 +440,7 @@ impl TabView {
     pub fn fixture(count: usize) -> Self {
         let mut result = Self {
             fixture_count: Some(count),
+            ahead: Default::default(),
             path_text: "/Synthetic / Performance fixture".into(),
             ..Self::base()
         };
@@ -457,6 +460,7 @@ impl TabView {
         Self {
             browser: None,
             fixture_count: None,
+            ahead: Default::default(),
             list: ListState::uniform_count(0, ROW),
             path_text: String::new(),
             filter: String::new(),
@@ -841,6 +845,36 @@ impl TabView {
             _ => {}
         }
     }
+    /// Jump to the first entry whose name starts with the letters typed within the last second.
+    fn type_ahead(&mut self, c: char) {
+        let now = std::time::Instant::now();
+        if self
+            .ahead
+            .1
+            .is_none_or(|t| now.duration_since(t).as_secs_f32() > 1.)
+        {
+            self.ahead.0.clear();
+        }
+        self.ahead = (
+            std::mem::take(&mut self.ahead.0) + &c.to_lowercase().to_string(),
+            Some(now),
+        );
+        let prefix = self.ahead.0.clone();
+        let hit = self.browser.as_ref().and_then(|b| {
+            b.entries()
+                .iter()
+                .position(|e| e.name.to_string_lossy().to_lowercase().starts_with(&prefix))
+        });
+        if let Some(index) = hit {
+            self.apply_selection(
+                SelectAction::Move {
+                    movement: Movement::To(index),
+                    modifiers: SelectMods::default(),
+                },
+                true,
+            );
+        }
+    }
     fn shortcut(&mut self, ui: &mut Ui, jobs: &mut AppJobs) {
         let mut keys = ui.shortcuts().to_vec();
         if ui.focus_is_text() {
@@ -854,6 +888,16 @@ impl TabView {
             );
         }
         let files_focused = ui.focus_key().is_none_or(|id| id.starts_with("file-list"));
+        if let Some(id) = ui.focus_key().filter(|id| id.starts_with("file-list")) {
+            for c in ui
+                .text(id)
+                .to_owned()
+                .chars()
+                .filter(|c| !c.is_control() && *c != ' ')
+            {
+                self.type_ahead(c);
+            }
+        }
         for press in keys {
             let control = press.mods.ctrl || press.mods.cmd;
             if files_focused && !press.mods.alt {

@@ -457,38 +457,42 @@ impl View for BrowserView {
                 | Key::Left
                 | Key::Right
                 | Key::Tab
-        ) || ((mods.ctrl || mods.cmd)
-            && matches!(
-                key,
-                Key::Char(
-                    'l' | 'f'
-                        | 'F'
-                        | 'a'
-                        | 'A'
-                        | 'c'
-                        | 'C'
-                        | 'v'
-                        | 'V'
-                        | 'x'
-                        | 'X'
-                        | 'z'
-                        | 'Z'
-                        | 'n'
-                        | 'N'
-                        | 't'
-                        | 'T'
-                        | 'w'
-                        | 'W'
-                        | 'd'
-                        | 'D'
-                        | 'h'
-                        | 'H'
-                        | 'p'
-                        | 'P'
-                        | 'g'
-                        | 'G'
-                )
-            ))
+        ) || (!mods.ctrl
+            && !mods.cmd
+            && !mods.alt
+            && matches!(key, Key::Char(c) if !c.is_control()))
+            || ((mods.ctrl || mods.cmd)
+                && matches!(
+                    key,
+                    Key::Char(
+                        'l' | 'f'
+                            | 'F'
+                            | 'a'
+                            | 'A'
+                            | 'c'
+                            | 'C'
+                            | 'v'
+                            | 'V'
+                            | 'x'
+                            | 'X'
+                            | 'z'
+                            | 'Z'
+                            | 'n'
+                            | 'N'
+                            | 't'
+                            | 'T'
+                            | 'w'
+                            | 'W'
+                            | 'd'
+                            | 'D'
+                            | 'h'
+                            | 'H'
+                            | 'p'
+                            | 'P'
+                            | 'g'
+                            | 'G'
+                    )
+                ))
             || (mods.alt && matches!(key, Key::Left | Key::Right | Key::Up))
     }
 }
