@@ -2410,7 +2410,7 @@ impl TabView {
             .named("Filter this folder · Ctrl+F")
             .when(!real, |e| e.disabled())
             .tip(if real {
-                "Filter current folder"
+                "Filter current folder · words, kind:dir, ext:png, size:>10mb, modified:<7d"
             } else {
                 "Filtering is disabled for the synthetic rendering fixture"
             });

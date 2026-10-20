@@ -7,6 +7,7 @@
 //! an unresponsive filesystem call cannot be forcibly interrupted by std.
 
 pub mod listing;
+pub mod query;
 pub mod selection;
 #[cfg(target_os = "linux")]
 pub mod watch;
@@ -632,7 +633,8 @@ fn filter_entries(
     request: &Request,
     shared: &Shared,
 ) -> Option<Result<Vec<Entry>, String>> {
-    let filter = request.filter.to_lowercase();
+    let query = query::Query::parse(&request.filter);
+    let now = std::time::SystemTime::now();
     let mut entries = Vec::new();
     for (index, record) in records.iter().enumerate() {
         if index % 256 == 0 && shared.obsolete(request.generation) {
@@ -641,7 +643,7 @@ fn filter_entries(
         if !request.show_hidden && record.entry.name.as_encoded_bytes().starts_with(b".") {
             continue;
         }
-        if filter.is_empty() || record.folded_name.contains(&filter) {
+        if query.is_empty() || query.matches(&record.folded_name, &record.entry, now) {
             entries.push(record.entry.clone());
         }
     }
