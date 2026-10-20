@@ -32,6 +32,6 @@ See [development](docs/DEVELOPMENT.md), [architecture](docs/ARCHITECTURE.md), [r
 
 Available now: tabs, a command palette (Ctrl+P), list and grid views with image thumbnails, sortable size/date columns, text and image previews, folder totals, bookmarks/recents/volumes, rename (including template batch rename), create, cut/move on one filesystem, Trash with undo, copy path, open with the default app, and live refresh after external changes.
 
-Still in development: split panels, native drag/drop, Wayland clipboard, replace/skip conflict prompts, archive creation and passwords UI, system-wide indexed search, accessibility/IME and localization. Windows/macOS and native Wayland are not yet qualified. Keep the current experimental scope in mind when testing.
+Still in development: split panels, native drag/drop, Wayland clipboard, replace/skip conflict prompts, password-protected archive creation and extraction prompts, system-wide indexed search, accessibility/IME and localization. Windows/macOS and native Wayland are not yet qualified. Keep the current experimental scope in mind when testing.
 
 MegaMan is [MIT licensed](LICENSE). Dependencies retain their own licenses; the Ubuntu font license is preserved in [licenses/](licenses/Ubuntu-font-LICENSE.txt).

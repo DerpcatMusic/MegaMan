@@ -805,10 +805,10 @@ mod tests {
         let fixture = Fixture::new();
         let dest = fixture.path("dest");
         fs::create_dir(&dest).unwrap();
-        for name in ["first", "conflict", "later"] {
+        // "conflict" is a missing source: name clashes keep both, so a vanished source fails the root.
+        for name in ["first", "later"] {
             fs::write(fixture.path(name), name.as_bytes()).unwrap();
         }
-        fs::write(dest.join("conflict"), b"existing destination").unwrap();
         let mut view = TransfersUi::new();
         assert!(
             view.start(
@@ -833,10 +833,7 @@ mod tests {
         assert!(matches!(outcome.roots[2].outcome, RootOutcome::NotStarted));
         assert!(view.summary().contains("1 item published"));
         assert_eq!(fs::read(dest.join("first")).unwrap(), b"first");
-        assert_eq!(
-            fs::read(dest.join("conflict")).unwrap(),
-            b"existing destination"
-        );
+        assert!(!dest.join("conflict").exists());
         assert!(!dest.join("later").exists());
         assert!(!view.start(vec![fixture.path("later")], dest.clone()));
         let old_ack = view.action_id("acknowledge");

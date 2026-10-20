@@ -34,6 +34,7 @@ pub(super) struct FileOps {
     selecting: Option<Materialization>,
     cutting: Option<Materialization>,
     renaming: Option<Materialization>,
+    zipping: Option<Materialization>,
     cut: Option<Vec<PathBuf>>,
     running: Option<mpsc::Receiver<Done>>,
     undo: Vec<Vec<Undo>>,
@@ -100,6 +101,82 @@ pub(super) fn batch_plan(
         }
     }
     Ok(plan)
+}
+/// Walk `path` into archive sources named relative to `root`; symlinks and specials are skipped.
+fn zip_sources(
+    path: &FsPath,
+    root: &FsPath,
+    out: &mut Vec<browser_archive::CreateSource>,
+) -> std::io::Result<()> {
+    use browser_archive::CreateSource;
+    let meta = std::fs::symlink_metadata(path)?;
+    let name = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
+    if meta.is_file() {
+        out.push(CreateSource::file(path, name));
+    } else if meta.is_dir() {
+        out.push(CreateSource::directory(name));
+        let mut children: Vec<_> = std::fs::read_dir(path)?.collect::<Result<_, _>>()?;
+        children.sort_by_key(|e| e.file_name());
+        for child in children {
+            zip_sources(&child.path(), root, out)?;
+        }
+    }
+    Ok(())
+}
+/// Write the selection to a new ZIP in the first item's folder.
+fn compress(paths: Vec<PathBuf>) -> Done {
+    use browser_archive::{Cancellation, Control, CreateOptions, Limits, create_new};
+    let fail = |message: String| Done {
+        undo: vec![],
+        refresh: vec![],
+        failure: Some(message),
+        verb: "Compressed",
+        copied: 0,
+    };
+    let Some(parent) = paths
+        .first()
+        .and_then(|p| p.parent())
+        .map(FsPath::to_path_buf)
+    else {
+        return fail("nothing to compress".into());
+    };
+    let stem = match paths.as_slice() {
+        [one] => one.file_name().map(|n| n.to_string_lossy().into_owned()),
+        _ => parent.file_name().map(|n| n.to_string_lossy().into_owned()),
+    }
+    .unwrap_or_else(|| "Archive".into());
+    let zip = fsops::unique_in(&parent, OsString::from(format!("{stem}.zip")).as_os_str());
+    let mut sources = Vec::new();
+    for path in &paths {
+        if let Err(e) = zip_sources(path, &parent, &mut sources) {
+            return fail(format!("cannot read {}: {e}", path.display()));
+        }
+    }
+    let cancel = Cancellation::default();
+    let control = Control::new(&cancel, std::time::Duration::from_secs(3600), 256 << 30);
+    match create_new(
+        &sources,
+        &zip,
+        &CreateOptions::default(),
+        None,
+        Limits::default(),
+        &control,
+    ) {
+        Ok(_) => Done {
+            undo: vec![Undo::Remove(zip)],
+            refresh: vec![parent],
+            failure: None,
+            verb: "Compressed",
+            copied: 0,
+        },
+        Err(e) => fail(e.to_string()),
+    }
 }
 /// Copy `path` into `dest_dir` (verified, never replacing), then send the original to Trash.
 fn move_across(path: &FsPath, dest_dir: &FsPath) -> Result<(), String> {
@@ -316,6 +393,16 @@ impl FileOps {
             self.renaming = self.materialize(snapshot, selection, "rename");
         }
     }
+    /// Compress the selection into a new "<name>.zip" beside it (never replaces; undo removes it).
+    pub(super) fn compress_selection(
+        &mut self,
+        snapshot: Option<browser_core::listing::ListingSnapshot>,
+        selection: &Selection,
+    ) {
+        if !self.busy() {
+            self.zipping = self.materialize(snapshot, selection, "compress");
+        }
+    }
     /// Begin trashing the selection: materialize paths off-thread, then trash each.
     pub(super) fn trash_selection(
         &mut self,
@@ -458,6 +545,19 @@ impl FileOps {
                 Err(error) => {
                     self.message = Some((format!("Cannot trash selection: {error:?}"), true));
                 }
+            }
+        }
+        if let Some(work) = &mut self.zipping
+            && let Some(result) = work.poll()
+        {
+            self.zipping = None;
+            changed = true;
+            match result {
+                Ok(paths) => {
+                    let paths = paths.into_paths();
+                    self.spawn("Compressing", move || compress(paths));
+                }
+                Err(error) => self.message = Some((format!("Cannot compress: {error:?}"), true)),
             }
         }
         if let Some(work) = &mut self.renaming
@@ -768,6 +868,22 @@ mod tests {
             dir.join("a").exists() && dir.join("b").exists(),
             "nothing renamed"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn compress_writes_a_zip_beside_the_selection_and_undo_removes_it() {
+        let dir = std::env::temp_dir().join(format!("fileops-zip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("d/sub")).unwrap();
+        std::fs::write(dir.join("d/sub/f.txt"), b"hello").unwrap();
+        let done = compress(vec![dir.join("d")]);
+        assert!(done.failure.is_none(), "{:?}", done.failure);
+        let zip = dir.join("d.zip");
+        assert!(zip.metadata().unwrap().len() > 0);
+        assert_eq!(done.undo, vec![Undo::Remove(zip.clone())]);
+        // a second run keeps both
+        assert!(compress(vec![dir.join("d")]).failure.is_none());
+        assert!(dir.join("d (2).zip").exists());
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
