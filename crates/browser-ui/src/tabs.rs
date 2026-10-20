@@ -1,6 +1,6 @@
 //! Application shell. Tab controls and scoped input routing land separately.
 use super::*;
-use browser_core::workspace::{Activation, Limits, Workspace};
+use browser_core::workspace::{Activation, Limits, TabId, TabSnapshot, Workspace};
 
 pub struct BrowserView {
     pub(super) workspace: Workspace<TabView>,
@@ -106,8 +106,162 @@ impl BrowserView {
     }
 }
 
+/// A structural workspace change requested this frame (at most one is applied).
+enum TabIntent {
+    Activate(TabId),
+    Close(TabId),
+    New,
+    Reopen,
+    Cycle(isize),
+}
+
+impl BrowserView {
+    fn tab_intent(&self, ui: &Ui) -> Option<TabIntent> {
+        for (id, _) in self.workspace.tabs() {
+            if clicked(ui, &format!("tab-close/{id}")) {
+                return Some(TabIntent::Close(id));
+            }
+            if clicked(ui, &format!("tab/{id}")) {
+                return Some(TabIntent::Activate(id));
+            }
+        }
+        if clicked(ui, "tab-new") {
+            return Some(TabIntent::New);
+        }
+        for press in ui.shortcuts() {
+            if !(press.mods.ctrl || press.mods.cmd) {
+                continue;
+            }
+            match press.key {
+                Key::Char('t' | 'T') if press.mods.shift => {
+                    return Some(TabIntent::Reopen);
+                }
+                Key::Char('t' | 'T') => return Some(TabIntent::New),
+                Key::Char('w' | 'W') => {
+                    return self.workspace.active().map(TabIntent::Close);
+                }
+                Key::Tab => {
+                    return Some(TabIntent::Cycle(if press.mods.shift { -1 } else { 1 }));
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    fn apply_tab_intent(&mut self, ui: &mut Ui, intent: TabIntent) {
+        let changed = match intent {
+            TabIntent::Activate(id) => self.workspace.activate(id).unwrap_or(false),
+            TabIntent::Cycle(step) => {
+                let ids: Vec<_> = self.workspace.tabs().map(|(id, _)| id).collect();
+                let at = self
+                    .workspace
+                    .active()
+                    .and_then(|a| ids.iter().position(|i| *i == a));
+                match at {
+                    Some(at) if ids.len() > 1 => {
+                        let next = (at as isize + step).rem_euclid(ids.len() as isize) as usize;
+                        self.workspace.activate(ids[next]).unwrap_or(false)
+                    }
+                    _ => false,
+                }
+            }
+            TabIntent::New => {
+                let location = self
+                    .workspace
+                    .active()
+                    .and_then(|id| self.workspace.get(id).ok())
+                    .and_then(TabView::location)
+                    .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+                    .unwrap_or_else(|| PathBuf::from("/"));
+                self.workspace
+                    .create(TabView::new(location), Activation::Foreground)
+                    .is_ok()
+            }
+            TabIntent::Reopen => {
+                let Some(closed) = self.workspace.recently_closed().next_back() else {
+                    return;
+                };
+                let (id, location) = (closed.id(), closed.snapshot().location().to_path_buf());
+                self.workspace
+                    .reopen(id, TabView::new(location), Activation::Foreground)
+                    .is_ok()
+            }
+            TabIntent::Close(id) => {
+                let snapshot = self.workspace.get(id).ok().and_then(|tab| {
+                    tab.location()
+                        .map(|l| TabSnapshot::new(l, Vec::new(), Vec::new(), tab.filter.clone()))
+                });
+                match snapshot {
+                    Some(snapshot) => self.workspace.close(id, snapshot).is_ok(),
+                    None => self.workspace.close_without_history(id).is_ok(),
+                }
+            }
+        };
+        if changed {
+            ui.discard_input_for_view_change();
+            ui.focus("file-list");
+            self.jobs.geometry_changed = true;
+        }
+    }
+    fn tab_strip(&self, ui: &Ui) -> El {
+        let active = self.workspace.active();
+        let mut items: Vec<El> = self
+            .workspace
+            .tabs()
+            .map(|(id, tab)| {
+                let selected = Some(id) == active;
+                row([
+                    col([row([
+                        glyph(Glyph::Folder, color(0xe2bd55)),
+                        label(tab.title()).min_w(0).clip(),
+                    ])
+                    .gap(7)])
+                    .id(format!("tab/{id}"))
+                    .a11y(A11y::Button)
+                    .named("Switch to tab")
+                    .focusable()
+                    .min_w(0)
+                    .shrink(1),
+                    action(
+                        ui,
+                        &format!("tab-close/{id}"),
+                        "Close tab · Ctrl+W",
+                        glyph(Glyph::Close, muted()),
+                        true,
+                        false,
+                    ),
+                ])
+                .gap(4)
+                .pad((8, 4))
+                .align(Align::Center)
+                .fill(if selected { ground() } else { chrome() })
+                .radius(3)
+                .min_w(0)
+                .shrink(1)
+            })
+            .collect();
+        items.push(action(
+            ui,
+            "tab-new",
+            "New tab · Ctrl+T",
+            label("+"),
+            true,
+            false,
+        ));
+        items.push(spacer());
+        row(items)
+            .gap(2)
+            .align(Align::Center)
+            .fill(chrome())
+            .w(pct(100))
+    }
+}
+
 impl View for BrowserView {
     fn build(&mut self, ui: &mut Ui, input: &Input) -> El {
+        if let Some(intent) = self.tab_intent(ui) {
+            self.apply_tab_intent(ui, intent);
+        }
         self.jobs.raw_extraction_owner = self.jobs.presented_extraction_owner;
         self.jobs.built_extraction_owner = None;
         self.poll_jobs();
@@ -132,14 +286,15 @@ impl View for BrowserView {
         if let Some(tree) = self.jobs.build_copy_transfers(ui) {
             return tree;
         }
+        let strip = self.tab_strip(ui);
         if let Some(id) = self.workspace.active() {
-            return self
-                .workspace
-                .get_mut(id)
-                .expect("active tab is live")
-                .build(ui, &mut self.jobs);
+            let tab = self.workspace.get_mut(id).expect("active tab is live");
+            return tab.build(ui, &mut self.jobs, Some(strip));
         }
-        let tree = col([label("No folders open")]).grow(1).min_w(0).min_h(0);
+        let tree = col([strip, label("No folders open")])
+            .grow(1)
+            .min_w(0)
+            .min_h(0);
         self.jobs.with_mutation_status(ui, tree)
     }
     fn changed(&mut self) -> bool {
@@ -207,6 +362,7 @@ impl View for BrowserView {
                 | Key::Escape
                 | Key::Delete
                 | Key::Function(2)
+                | Key::Tab
         ) || ((mods.ctrl || mods.cmd)
             && matches!(
                 key,
@@ -250,6 +406,33 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.0).unwrap();
         }
+    }
+    #[test]
+    fn tab_intents_open_cycle_close_and_reopen_by_location() {
+        let fixture = Fixture::new();
+        let sub = fixture.0.join("sub");
+        fs::create_dir(&sub).unwrap();
+        let mut view = BrowserView::new(fixture.0.clone());
+        let mut ui = make_ui().unwrap();
+        view.apply_tab_intent(&mut ui, TabIntent::New);
+        assert_eq!(view.workspace.len(), 2);
+        let second = view.workspace.active().unwrap();
+        assert_eq!(view.tab().location().unwrap(), fixture.0);
+        view.apply_tab_intent(&mut ui, TabIntent::Cycle(1));
+        assert_ne!(view.workspace.active(), Some(second));
+        view.apply_tab_intent(&mut ui, TabIntent::Cycle(-1));
+        assert_eq!(view.workspace.active(), Some(second));
+        view.apply_tab_intent(&mut ui, TabIntent::Close(second));
+        assert_eq!(view.workspace.len(), 1);
+        view.apply_tab_intent(&mut ui, TabIntent::Reopen);
+        assert_eq!(view.workspace.len(), 2);
+        assert_ne!(
+            view.workspace.active(),
+            Some(second),
+            "reopened tabs get new ids"
+        );
+        assert_eq!(view.tab().location().unwrap(), fixture.0);
+        drop(sub);
     }
     fn until(mut ready: impl FnMut() -> bool) {
         let deadline = Instant::now() + Duration::from_secs(10);

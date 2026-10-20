@@ -2,7 +2,7 @@
 
 MegaMan is being built in verified increments. Existing functionality is experimental; this list is a work breakdown, not a promise of completed platform support or release dates.
 
-- Connect stable tabs, recently closed tabs, reorder and per-tab navigation while keeping operations app-owned.
+- Tabs exist (Ctrl+T new, Ctrl+W close, Ctrl+Shift+T reopen, Ctrl+Tab cycle, click to switch); drag reordering, pinning and closed-tab history beyond location remain.
 - Add resizable split panels, saved workspaces, bookmarks, recents and volume navigation.
 - Complete native inbound/outbound drag/drop, Wayland clipboard/data-device support and platform context actions.
 - Extend safe operations: rename (F2), create (Ctrl+N / Ctrl+Shift+N), trash (Delete) and undo (Ctrl+Z) exist; move, cross-filesystem move, per-volume trash, conflict decisions and recovery remain.

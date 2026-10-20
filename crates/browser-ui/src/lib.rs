@@ -396,6 +396,23 @@ struct TabView {
 }
 
 impl TabView {
+    fn title(&self) -> String {
+        if self.fixture_count.is_some() {
+            "Performance fixture".into()
+        } else {
+            self.browser
+                .as_ref()
+                .map(|b| {
+                    b.path()
+                        .file_name()
+                        .map_or_else(|| "Filesystem".into(), |s| s.to_string_lossy().into_owned())
+                })
+                .unwrap_or_else(|| "Filesystem".into())
+        }
+    }
+    fn location(&self) -> Option<PathBuf> {
+        self.browser.as_ref().map(|b| b.path().to_path_buf())
+    }
     pub fn new(path: PathBuf) -> Self {
         let path_text = path.to_string_lossy().into_owned();
         Self {
@@ -1104,7 +1121,7 @@ fn zip_path(path: &FsPath) -> bool {
 }
 
 impl TabView {
-    fn build(&mut self, ui: &mut Ui, jobs: &mut AppJobs) -> El {
+    fn build(&mut self, ui: &mut Ui, jobs: &mut AppJobs, strip: Option<El>) -> El {
         if std::mem::take(&mut jobs.copy_return_pending) {
             self.discard_listing_input = true;
             if self.find.is_some() {
@@ -1320,10 +1337,12 @@ impl TabView {
         .min_w(0)
         .shrink(1)
         .named("Current folder tab");
-        let tabs = row([tab, spacer(), detail("Local files").pad((10, 0))])
-            .align(Align::Center)
-            .fill(chrome())
-            .w(pct(100));
+        let tabs = strip.unwrap_or_else(|| {
+            row([tab, spacer(), detail("Local files").pad((10, 0))])
+                .align(Align::Center)
+                .fill(chrome())
+                .w(pct(100))
+        });
         let wide_columns = self.viewport.width >= 500.;
         let header = if wide_columns {
             row([
