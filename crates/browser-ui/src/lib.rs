@@ -80,6 +80,10 @@ fn muted() -> Color {
 fn selected() -> Color {
     theme_pick(0x087d99, 0x4f6bd8, 0x0a86a6)
 }
+/// Outline of the active tab.
+fn selected_accent() -> Color {
+    selected()
+}
 fn hover() -> Color {
     theme_pick(0x293235, 0x1d2333, 0xdde3e6)
 }

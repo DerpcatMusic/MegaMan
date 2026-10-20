@@ -147,6 +147,10 @@ enum TabIntent {
     New,
     Reopen,
     Cycle(isize),
+    /// Ctrl+1..9 (0-based index of the tab to show).
+    Nth(usize),
+    /// Ctrl+Shift+PageUp/PageDown: move the active tab by this many places.
+    Move(isize),
 }
 
 impl BrowserView {
@@ -176,6 +180,16 @@ impl BrowserView {
                 }
                 Key::Tab => {
                     return Some(TabIntent::Cycle(if press.mods.shift { -1 } else { 1 }));
+                }
+                Key::PageUp | Key::PageDown if press.mods.shift => {
+                    return Some(TabIntent::Move(if press.key == Key::PageUp {
+                        -1
+                    } else {
+                        1
+                    }));
+                }
+                Key::Char(c @ '1'..='9') => {
+                    return Some(TabIntent::Nth(c as usize - '1' as usize));
                 }
                 _ => {}
             }
@@ -307,6 +321,24 @@ impl BrowserView {
                     _ => false,
                 }
             }
+            TabIntent::Nth(n) => {
+                let id = self.workspace.tabs().nth(n).map(|(id, _)| id);
+                id.is_some_and(|id| self.workspace.activate(id).unwrap_or(false))
+            }
+            TabIntent::Move(step) => {
+                let len = self.workspace.tabs().len();
+                let at = self
+                    .workspace
+                    .active()
+                    .and_then(|a| Some((a, self.workspace.tabs().position(|(id, _)| id == a)?)));
+                match at {
+                    Some((id, at)) if len > 1 => {
+                        let to = (at as isize + step).clamp(0, len as isize - 1) as usize;
+                        self.workspace.reorder(id, to).unwrap_or(false)
+                    }
+                    _ => false,
+                }
+            }
             TabIntent::New => {
                 let location = self
                     .workspace
@@ -377,7 +409,13 @@ impl BrowserView {
                 .pad((8, 4))
                 .align(Align::Center)
                 .fill(if selected { ground() } else { chrome() })
-                .radius(3)
+                .radius(6)
+                .stroke(if selected {
+                    selected_accent()
+                } else {
+                    chrome()
+                })
+                .stroke_width(1)
                 .min_w(0)
                 .shrink(1)
             })
@@ -738,14 +776,8 @@ impl View for BrowserView {
                             | 'W'
                             | 'd'
                             | 'D'
-                            | 'h'
-                            | 'H'
-                            | 'p'
-                            | 'P'
-                            | '\\'
-                            | 'k'
-                            | 'g'
-                            | 'G'
+                            | '1'
+                            ..='9' | 'h' | 'H' | 'p' | 'P' | '\\' | 'k' | 'g' | 'G'
                     )
                 ))
             || (mods.alt && matches!(key, Key::Left | Key::Right | Key::Up))
