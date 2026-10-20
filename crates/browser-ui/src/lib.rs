@@ -11,6 +11,7 @@ use std::io::Read;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::OnceLock;
 
+mod dirsize;
 mod fileops;
 mod jobs;
 mod palette;
@@ -377,6 +378,7 @@ pub fn make_ui() -> Result<Ui, String> {
 struct TabView {
     browser: Option<Browser>,
     fixture_count: Option<usize>,
+    sizes: dirsize::DirSizes,
     /// Type-to-select buffer and when its last letter arrived.
     ahead: (String, Option<std::time::Instant>),
     list: ListState,
@@ -440,6 +442,7 @@ impl TabView {
     pub fn fixture(count: usize) -> Self {
         let mut result = Self {
             fixture_count: Some(count),
+            sizes: Default::default(),
             ahead: Default::default(),
             path_text: "/Synthetic / Performance fixture".into(),
             ..Self::base()
@@ -460,6 +463,7 @@ impl TabView {
         Self {
             browser: None,
             fixture_count: None,
+            sizes: Default::default(),
             ahead: Default::default(),
             list: ListState::uniform_count(0, ROW),
             path_text: String::new(),
@@ -633,6 +637,7 @@ impl TabView {
             .is_some_and(|at| std::time::Instant::now() >= at)
         {
             self.reload_at = None;
+            self.sizes.reset();
             // Keep the focused item selected across the re-list (full multi-selection
             // preservation would need path-keyed selection; documented limit).
             self.reveal_path = self
@@ -1890,6 +1895,11 @@ impl TabView {
         let entries = self.browser.as_ref().map(|b| b.entries());
         let (grid, cols, count) = (self.grid, self.cols(), self.count());
         let thumbs = &mut self.thumbs;
+        if let Some(b) = self.browser.as_ref().filter(|_| fixture.is_none()) {
+            self.sizes.follow(b.path());
+        }
+        let sizes = &self.sizes;
+        let mut wanted: Vec<PathBuf> = Vec::new();
         let revision = self.selection.revision().clone();
         let selection = &mut self.selection;
         let discard_listing_input = discard_listing_input || self.discard_listing_input;
@@ -2076,7 +2086,20 @@ impl TabView {
                 .min_w(0)
                 .grow(1)
                 .basis(0);
-                let size = detail(info.size.map(bytes).unwrap_or_else(|| "—".into()))
+                let size_text = match info.size {
+                    Some(n) => bytes(n),
+                    None if info.kind == EntryKind::Directory && fixture.is_none() => {
+                        match sizes.get(FsPath::new(&info.path)) {
+                            Some(size) => size.text(),
+                            None => {
+                                wanted.push(PathBuf::from(&info.path));
+                                "…".into()
+                            }
+                        }
+                    }
+                    None => "—".into(),
+                };
+                let size = detail(size_text)
                     .when(active, |e| e.fill(selected_ink()))
                     .min_w(78)
                     .reserve("999.9 MB");
@@ -2122,6 +2145,9 @@ impl TabView {
                     .clip()
             },
         );
+        for path in wanted {
+            self.sizes.want(path);
+        }
         self.context_requested |= context_request;
         self.rows_built = list.changed.rows_built;
         self.visible = list.changed.visible;
@@ -2335,6 +2361,7 @@ impl TabView {
         changed |= self.refresh();
         changed |= self.preview.poll();
         changed |= self.poll_watch();
+        changed |= self.sizes.poll();
         changed |= self.grid && self.thumbs.poll();
         if let Some(find) = &mut self.find {
             changed |= find.poll();
