@@ -11,6 +11,7 @@ pub(super) struct AppJobs {
     #[cfg(target_os = "linux")]
     pub(super) copy_transfers: Option<transfers::TransfersUi>,
     pub(super) fileops: fileops::FileOps,
+    pub(super) places: places::Places,
     pub(super) copy_return_pending: bool,
     pub(super) geometry_changed: bool,
     // The built tree and the source of current host input are deliberately
