@@ -99,6 +99,17 @@ const CONTEXT: &[Option<Cmd>] = &[
     Some(Cmd::Bookmark),
     Some(Cmd::ToggleSplit),
 ];
+/// The toolbar's View dropdown: layout, ordering and visibility.
+pub(super) const VIEW: &[Option<Cmd>] = &[
+    Some(Cmd::ToggleGrid),
+    Some(Cmd::ToggleInspector),
+    Some(Cmd::ToggleHidden),
+    None,
+    Some(Cmd::SortName),
+    Some(Cmd::SortType),
+    Some(Cmd::SortModified),
+    Some(Cmd::SortSize),
+];
 const SHOWN: usize = 8;
 
 /// Case-insensitive subsequence match; earlier and tighter matches rank first.
@@ -131,6 +142,7 @@ pub(super) fn matches(query: &str) -> Vec<(Cmd, &'static str, &'static str)> {
 #[derive(Default)]
 pub(super) struct Palette {
     menu: bool,
+    items: &'static [Option<Cmd>],
     /// Where a context menu floats: the pointer position when it was requested.
     pub(super) at: Point,
     query: String,
@@ -145,8 +157,12 @@ pub(super) enum Outcome {
 impl Palette {
     /// A fixed context menu: no text field, Escape or a choice closes it.
     pub(super) fn context(at: Point) -> Self {
+        Self::dropdown(at, CONTEXT)
+    }
+    pub(super) fn dropdown(at: Point, items: &'static [Option<Cmd>]) -> Self {
         Self {
             menu: true,
+            items,
             at,
             ..Self::default()
         }
@@ -166,7 +182,7 @@ impl Palette {
             outcome = Outcome::Close;
         }
         let mut items = Vec::new();
-        for (i, entry) in CONTEXT.iter().enumerate() {
+        for (i, entry) in self.items.iter().enumerate() {
             let Some(cmd) = entry else {
                 items.push(block(0, 1).w(pct(100)).fill(line()).shrink(0));
                 continue;
@@ -313,6 +329,7 @@ mod tests {
         assert!(
             CONTEXT
                 .iter()
+                .chain(VIEW)
                 .flatten()
                 .all(|c| COMMANDS.iter().any(|k| k.0 == *c))
         );
