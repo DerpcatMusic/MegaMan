@@ -13,7 +13,7 @@ impl Default for Settings {
         Self {
             show_hidden: true,
             sort: SortOrder::default(),
-            inspector: true,
+            inspector: false,
             grid: false,
         }
     }
