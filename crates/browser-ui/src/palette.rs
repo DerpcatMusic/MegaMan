@@ -31,6 +31,8 @@ pub(super) enum Cmd {
     Bookmark,
     ToggleInspector,
     ToggleGrid,
+    CopyPath,
+    OpenTerminal,
 }
 pub(super) const COMMANDS: &[(Cmd, &str, &str)] = &[
     (Cmd::Open, "Open", "Enter"),
@@ -60,6 +62,8 @@ pub(super) const COMMANDS: &[(Cmd, &str, &str)] = &[
     (Cmd::GoForward, "Go forward", "Alt+Right"),
     (Cmd::Bookmark, "Bookmark this folder", "Ctrl+D"),
     (Cmd::ToggleInspector, "Toggle inspector", "Space"),
+    (Cmd::CopyPath, "Copy full path", "Ctrl+Shift+C"),
+    (Cmd::OpenTerminal, "Open terminal here", ""),
     (
         Cmd::ToggleGrid,
         "Switch between list and grid view",
@@ -76,6 +80,8 @@ const CONTEXT: &[Cmd] = &[
     Cmd::Trash,
     Cmd::NewFolder,
     Cmd::NewFile,
+    Cmd::CopyPath,
+    Cmd::OpenTerminal,
     Cmd::Bookmark,
 ];
 const SHOWN: usize = 8;

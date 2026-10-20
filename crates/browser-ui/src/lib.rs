@@ -574,6 +574,22 @@ impl TabView {
             }
             Cmd::ToggleInspector => self.show_inspector = !self.show_inspector,
             Cmd::ToggleGrid => self.toggle_grid(),
+            Cmd::CopyPath => {
+                let path = self
+                    .selected
+                    .zip(self.browser.as_ref())
+                    .and_then(|(i, b)| b.entries().get(i))
+                    .map(|e| e.path.clone())
+                    .or_else(|| self.location());
+                if let Some(path) = path {
+                    ui.set_clipboard(path.to_string_lossy().into_owned());
+                }
+            }
+            Cmd::OpenTerminal => {
+                if let Some(dir) = self.location() {
+                    open_terminal(dir);
+                }
+            }
             Cmd::NewTab | Cmd::CloseTab | Cmd::ReopenTab | Cmd::NextTab | Cmd::PrevTab => {}
         }
     }
@@ -820,6 +836,8 @@ impl TabView {
                     );
                 } else if control && matches!(press.key, Key::Char('a' | 'A')) {
                     self.apply_selection(SelectAction::SelectAll, false);
+                } else if control && press.mods.shift && matches!(press.key, Key::Char('c' | 'C')) {
+                    self.run_command(ui, jobs, palette::Cmd::CopyPath);
                 } else if control && matches!(press.key, Key::Char('c' | 'C')) {
                     #[cfg(target_os = "linux")]
                     self.copy_selected_files(jobs);
@@ -1368,6 +1386,34 @@ fn open_external(path: PathBuf) {
             .spawn()
         {
             let _ = child.wait();
+        }
+    });
+}
+/// Start the user's terminal in `dir`: `$TERMINAL`, then common emulators. Detached.
+fn open_terminal(dir: PathBuf) {
+    std::thread::spawn(move || {
+        let env = std::env::var("TERMINAL").ok();
+        let candidates = env.iter().map(String::as_str).chain([
+            "xdg-terminal-exec",
+            "x-terminal-emulator",
+            "kitty",
+            "alacritty",
+            "konsole",
+            "gnome-terminal",
+            "xfce4-terminal",
+            "xterm",
+        ]);
+        for program in candidates {
+            if let Ok(mut child) = std::process::Command::new(program)
+                .current_dir(&dir)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                let _ = child.wait();
+                return;
+            }
         }
     });
 }
