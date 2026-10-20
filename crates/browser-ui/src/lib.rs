@@ -86,6 +86,10 @@ fn label(s: impl Into<std::sync::Arc<str>>) -> El {
 fn detail(s: impl Into<std::sync::Arc<str>>) -> El {
     text(s).text_size(12).fill(muted())
 }
+/// Small uppercase section title used by the places rail.
+fn rail_heading(title: &str) -> El {
+    detail(title.to_uppercase()).pad((10, 10))
+}
 fn hairline() -> El {
     block(0, 1).w(pct(100)).fill(line()).shrink(0)
 }
@@ -1247,7 +1251,7 @@ impl TabView {
                 Glyph::Folder,
             ),
         ];
-        let mut children = vec![detail("Quick access").pad((10, 8))];
+        let mut children = vec![rail_heading("Quick access")];
         if clicked(ui, "bookmark-homepage") {
             self.home_page = true;
         }
@@ -1266,7 +1270,8 @@ impl TabView {
                 self.home_page,
             )
             .w(pct(100))
-            .pad(0),
+            .pad(0)
+            .radius(6),
         );
         for (key, name, path, icon) in bookmarks {
             let id = format!("bookmark-{key}");
@@ -1297,7 +1302,8 @@ impl TabView {
                     current,
                 )
                 .w(pct(100))
-                .pad(0),
+                .pad(0)
+                .radius(6),
             );
         }
         let sections: [(&str, &str, PlaceItems); 3] = [
@@ -1333,7 +1339,7 @@ impl TabView {
             if items.is_empty() {
                 continue;
             }
-            children.push(detail(title).pad((10, 8)));
+            children.push(rail_heading(title));
             for (index, (name, path)) in items.into_iter().enumerate() {
                 let id = format!("place-{kind}-{index}");
                 if self.fixture_count.is_none() && clicked(ui, &id) {
@@ -1360,11 +1366,13 @@ impl TabView {
             }
         }
         children.push(spacer());
-        children.push(detail("File browser").pad((10, 8)));
+        children.push(rail_heading("File browser"));
         col(children)
             .w(self.rail_width)
             .min_w(RAIL_MIN)
             .h(pct(100))
+            .pad(6)
+            .gap(1)
             .fill(chrome())
             .clip()
             .scroll()
