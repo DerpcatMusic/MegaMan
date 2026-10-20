@@ -29,8 +29,18 @@ impl CatalogHandle {
         let handle = self.0.clone();
         std::thread::spawn(move || {
             let snapshot = default_snapshot_path();
-            let result = Catalog::open(&snapshot)
-                .or_else(|_| Catalog::rebuild(Config::load().rebuild_to(&snapshot)));
+            let result = Catalog::open(&snapshot).or_else(|_| {
+                // Home only unless the user's config names roots: a whole-machine walk is
+                // slow and rarely what a quick jump needs.
+                let config = Config::load();
+                let mut rebuild = config.rebuild_to(&snapshot);
+                if config.include.is_empty()
+                    && let Some(home) = std::env::var_os("HOME")
+                {
+                    rebuild = rebuild.roots([PathBuf::from(home)]);
+                }
+                Catalog::rebuild(rebuild)
+            });
             *handle.lock().unwrap_or_else(|e| e.into_inner()) = match result {
                 Ok(catalog) => {
                     catalog.warm();
@@ -325,6 +335,10 @@ impl Goto {
                 .w(pct(100))
                 .fill(chrome())
                 .shrink(0)
+                .radius(8)
+                .stroke(line())
+                .stroke_width(1)
+                .elevation(Elevation::Floating)
                 .id("goto")
                 .named("Go to"),
             outcome,

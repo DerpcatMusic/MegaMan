@@ -399,6 +399,45 @@ impl BrowserView {
     }
 }
 
+/// Float `overlay` above `tree`: a context menu at the pointer (kept inside the window), anything
+/// else (command palette, GoTo) centred near the top. A dimmed backdrop catches outside clicks.
+fn floating(tree: El, overlay: El, menu_at: Option<Point>, window: Size) -> El {
+    const MENU_W: f64 = 288.;
+    const MENU_H: f64 = 520.;
+    let layer = match menu_at {
+        Some(at) => col([overlay])
+            .pad(mui::scene::Insets {
+                left: at.x.clamp(0., (window.width - MENU_W).max(0.)),
+                top: at.y.clamp(0., (window.height - MENU_H).max(0.)),
+                right: 0.,
+                bottom: 0.,
+            })
+            .align(Align::Start),
+        None => col([col([overlay]).w(clamp(660., 240., (window.width - 40.).max(240.)))])
+            .pad(mui::scene::Insets {
+                left: 0.,
+                top: 56.,
+                right: 0.,
+                bottom: 0.,
+            })
+            .align(Align::Center),
+    };
+    stack([
+        tree.w(pct(100)).h(pct(100)),
+        block(0, 0)
+            .w(pct(100))
+            .h(pct(100))
+            .id("overlay-backdrop")
+            .fill(color(0x000000))
+            .opacity(if menu_at.is_some() { 0.0 } else { 0.28 }),
+        layer.w(pct(100)).h(pct(100)),
+    ])
+    .w(pct(100))
+    .h(pct(100))
+    .min_w(0)
+    .min_h(0)
+}
+
 impl BrowserView {
     /// Copy files dropped from other applications into the active tab's folder.
     pub(super) fn admit_drops(&mut self) {
@@ -485,6 +524,10 @@ impl View for BrowserView {
             return tree;
         }
         let strip = self.tab_strip(ui);
+        if clicked(ui, "overlay-backdrop") {
+            self.palette = None;
+            self.goto = None;
+        }
         let mut palette_el = None;
         if let Some(palette) = &mut self.palette {
             let (el, outcome) = palette.build(ui);
@@ -516,13 +559,17 @@ impl View for BrowserView {
             tab.active_pane = !self.b_active;
             let mut tree = tab.build(ui, &mut self.jobs, Some(strip));
             if std::mem::take(&mut tab.context_requested) {
-                self.palette = Some(palette::Palette::context());
+                self.palette = Some(palette::Palette::context(
+                    ui.pointer().pos.unwrap_or_default(),
+                ));
             }
             if let Some(b) = &mut self.pane_b {
                 b.active_pane = self.b_active;
                 let right = b.build(ui, &mut self.jobs, None);
                 if std::mem::take(&mut b.context_requested) {
-                    self.palette = Some(palette::Palette::context());
+                    self.palette = Some(palette::Palette::context(
+                        ui.pointer().pos.unwrap_or_default(),
+                    ));
                 }
                 tree = row([
                     tree.grow(1).basis(0).min_w(0).h(pct(100)),
@@ -533,13 +580,13 @@ impl View for BrowserView {
                 .h(pct(100))
                 .min_h(0);
             }
-            let palette_el = palette_el.or(goto_el);
-            return match palette_el {
-                Some(el) => col([el, tree.grow(1).basis(0).min_h(0)])
-                    .w(pct(100))
-                    .h(pct(100))
-                    .min_w(0)
-                    .min_h(0),
+            let at = self.palette.as_ref().filter(|p| p.is_menu()).map(|p| p.at);
+            let size = self
+                .workspace
+                .get(id)
+                .map_or(Size::new(1000., 700.), |t| t.window);
+            return match palette_el.or(goto_el) {
+                Some(el) => floating(tree, el, at, size),
                 None => tree,
             };
         }
