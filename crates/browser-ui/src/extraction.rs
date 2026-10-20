@@ -19,6 +19,13 @@ struct ControlScope {
     job: ExtractionJobId,
     epoch: u64,
 }
+/// Equality-only input address for the app shell. Contains no draft or paths.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ExtractionInputOwner {
+    owner: u64,
+    epoch: u64,
+    job: Option<ExtractionJobId>,
+}
 #[derive(Clone, Copy)]
 enum Command {
     Start,
@@ -82,12 +89,27 @@ impl ExtractionUi {
     pub(super) fn visible(&self) -> bool {
         self.visible
     }
+    pub(super) fn input_owner(&self) -> Option<ExtractionInputOwner> {
+        (self.visible && self.owner != 0 && self.epoch != u64::MAX).then_some(
+            ExtractionInputOwner {
+                owner: self.owner,
+                epoch: self.epoch,
+                job: self.active,
+            },
+        )
+    }
     pub(super) fn show(&mut self) {
+        if !self.visible {
+            self.bump();
+        }
         self.visible = true;
         self.focus_pending = true;
         self.changed = true;
     }
     fn hide(&mut self) {
+        if self.visible {
+            self.bump();
+        }
         self.visible = false;
         self.changed = true;
     }
@@ -757,6 +779,75 @@ mod tests {
         time::{Duration, Instant},
     };
     static NEXT: AtomicU64 = AtomicU64::new(0);
+    #[test]
+    fn input_owner_changes_on_visibility_and_rejects_exhausted_identity() {
+        let mut panel = ExtractionUi::new();
+        assert!(panel.input_owner().is_none());
+        panel.show();
+        let first = panel.input_owner().unwrap();
+        panel.show();
+        assert_eq!(panel.input_owner(), Some(first));
+        panel.hide();
+        assert!(panel.input_owner().is_none());
+        panel.show();
+        assert_ne!(panel.input_owner(), Some(first));
+        let mut foreign = ExtractionUi::new();
+        foreign.show();
+        assert_ne!(panel.input_owner(), foreign.input_owner());
+        panel.epoch = u64::MAX;
+        assert!(panel.input_owner().is_none());
+        panel.epoch = 0;
+        panel.owner = 0;
+        assert!(panel.input_owner().is_none());
+    }
+    #[test]
+    fn prepared_extraction_survives_origin_tab_retirement_and_keeps_receipt() {
+        let fixture = Fixture::new();
+        let source = fixture.zip();
+        let destination = fixture.0.join("after-tab-close");
+        let mut view = crate::BrowserView::fixture(0);
+        view.tab_mut().archive = Some(crate::archive::ArchivePanel::new(source));
+        let mut controller = ExtractionUi::new();
+        wait(|| {
+            let panel = view.tab_mut().archive.as_mut().unwrap();
+            panel.poll();
+            panel
+                .prepare_extraction(
+                    &mut controller,
+                    ExtractionSelection::All,
+                    destination.clone(),
+                )
+                .then_some(())
+        });
+        view.jobs.extraction = Some(controller);
+        let origin = view.workspace.active().unwrap();
+        ready(view.jobs.extraction.as_mut().unwrap());
+        let removed = view.workspace.close_without_history(origin).unwrap();
+        // The tab's archive browser is actually destroyed off this thread;
+        // the prepared ticket remains owned by the application controller.
+        thread::spawn(move || drop(removed)).join().unwrap();
+        assert!(view.workspace.is_empty());
+        assert!(view.mutations_busy());
+        let panel = view.jobs.extraction.as_mut().unwrap();
+        assert!(panel.command(panel.scope().unwrap(), Command::Start));
+        terminal(panel);
+        assert_eq!(
+            fs::read(destination.join("folder/member")).unwrap(),
+            b"verified payload"
+        );
+        assert!(view.mutations_busy(), "receipt still reserves admission");
+        let mut ui = crate::make_ui().unwrap();
+        for _ in 0..3 {
+            let tree = view.build(&mut ui, &Input::default());
+            ui.frame(tree, Some(Size::new(640., 480.)), Input::default(), 0.016)
+                .unwrap();
+            view.after_frame(&mut ui);
+        }
+        assert!(view.evidence().contains("\"mode\":\"extraction\""));
+        let panel = view.jobs.extraction.as_mut().unwrap();
+        assert!(panel.command(panel.scope().unwrap(), Command::Acknowledge));
+        assert!(!view.mutations_busy());
+    }
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {
@@ -922,37 +1013,37 @@ mod tests {
         ready(&mut extraction);
         extraction.hide();
         let mut view = BrowserView::fixture(0);
-        view.extraction = Some(extraction);
-        view.copy_transfers = Some(crate::transfers::TransfersUi::new());
+        view.jobs.extraction = Some(extraction);
+        view.jobs.copy_transfers = Some(crate::transfers::TransfersUi::new());
         view.paste_files();
         assert!(
-            !view.copy_transfers.as_ref().unwrap().visible(),
+            !view.jobs.copy_transfers.as_ref().unwrap().visible(),
             "an idle prior copy must not hide the blocking extraction"
         );
-        view.copy_transfers = None;
+        view.jobs.copy_transfers = None;
         for terminal_state in [false, true] {
             if terminal_state {
-                let panel = view.extraction.as_mut().unwrap();
+                let panel = view.jobs.extraction.as_mut().unwrap();
                 assert!(panel.command(panel.scope().unwrap(), Command::Cancel));
                 terminal(panel);
             }
-            view.file_clipboard = Some(ClipboardUi::fixture_offer(
+            view.jobs.file_clipboard = Some(ClipboardUi::fixture_offer(
                 vec![source.clone()],
                 destination.clone(),
             ));
             assert!(view.mutations_busy());
-            view.admit_paste_offer();
+            view.jobs.admit_paste_offer();
             assert!(
-                view.copy_transfers.is_none(),
+                view.jobs.copy_transfers.is_none(),
                 "extraction owns admission even when hidden or terminal"
             );
-            assert!(!view.file_clipboard.as_ref().unwrap().paste_pending());
+            assert!(!view.jobs.file_clipboard.as_ref().unwrap().paste_pending());
             assert!(!destination.join("payload").exists());
         }
-        let panel = view.extraction.as_mut().unwrap();
+        let panel = view.jobs.extraction.as_mut().unwrap();
         assert!(panel.command(panel.scope().unwrap(), Command::Acknowledge));
         assert!(!view.mutations_busy());
-        view.file_clipboard = Some(ClipboardUi::fixture_offer(
+        view.jobs.file_clipboard = Some(ClipboardUi::fixture_offer(
             vec![source],
             destination.clone(),
         ));
@@ -960,21 +1051,27 @@ mod tests {
             view.mutations_busy(),
             "a ready native offer itself reserves admission"
         );
-        view.copy_transfers = Some(crate::transfers::TransfersUi::new());
+        view.jobs.copy_transfers = Some(crate::transfers::TransfersUi::new());
         view.paste_files();
         assert!(
-            !view.copy_transfers.as_ref().unwrap().visible(),
+            !view.jobs.copy_transfers.as_ref().unwrap().visible(),
             "an idle prior copy must not hide a pending native offer"
         );
-        view.admit_paste_offer();
-        assert!(view.copy_transfers.is_some());
+        view.jobs.admit_paste_offer();
+        assert!(view.jobs.copy_transfers.is_some());
         assert!(
-            view.file_clipboard.as_ref().unwrap().message().is_none(),
+            view.jobs
+                .file_clipboard
+                .as_ref()
+                .unwrap()
+                .message()
+                .is_none(),
             "accepted jobs must not duplicate the retained transfer status"
         );
         wait(|| {
-            view.poll_copy_transfers();
-            view.copy_transfers
+            view.poll_jobs();
+            view.jobs
+                .copy_transfers
                 .as_ref()
                 .unwrap()
                 .summary()
@@ -989,8 +1086,8 @@ mod tests {
             view.mutations_busy(),
             "copy results retain admission until explicitly acknowledged"
         );
-        view.copy_transfers.as_mut().unwrap().hide();
-        view.archive = Some(ArchivePanel::new(browser.source().to_owned()));
+        view.jobs.copy_transfers.as_mut().unwrap().hide();
+        view.tab_mut().archive = Some(ArchivePanel::new(browser.source().to_owned()));
         let mut ui = crate::make_ui().unwrap();
         let size = Size::new(640., 480.);
         let step = |view: &mut BrowserView, ui: &mut Ui, input: Input| {
@@ -1001,21 +1098,22 @@ mod tests {
         for _ in 0..6 {
             step(&mut view, &mut ui, Input::default());
         }
-        let transfers = view.copy_transfers.as_ref().unwrap();
+        let transfers = view.jobs.copy_transfers.as_ref().unwrap();
         let show_id = transfers.action_id("show");
         assert!(
             ui.scene().unwrap().surface(&show_id).is_some(),
             "copy receipts remain reachable while browsing ZIP"
         );
-        assert!(!view.extraction.as_ref().unwrap().busy());
+        assert!(!view.jobs.extraction.as_ref().unwrap().busy());
         assert!(!fixture.0.join("extracted").exists());
         // A visible result screen must retain its own acknowledgement and not
         // accidentally dispatch that click into a newly exposed archive action.
-        view.copy_transfers.as_mut().unwrap().show();
+        view.jobs.copy_transfers.as_mut().unwrap().show();
         for _ in 0..4 {
             step(&mut view, &mut ui, Input::default());
         }
         let id = view
+            .jobs
             .copy_transfers
             .as_ref()
             .unwrap()
@@ -1038,8 +1136,8 @@ mod tests {
         }
         step(&mut view, &mut ui, Input::default());
         assert!(!view.mutations_busy());
-        assert!(view.archive.is_some());
-        assert!(!view.extraction.as_ref().unwrap().busy());
+        assert!(view.tab().archive.is_some());
+        assert!(!view.jobs.extraction.as_ref().unwrap().busy());
     }
 
     #[test]
@@ -1051,15 +1149,16 @@ mod tests {
         fs::create_dir(&other).unwrap();
         let mut view = BrowserView::new(fixture.0.clone());
         wait(|| {
-            view.refresh();
+            view.tab_mut().refresh();
             matches!(
-                view.browser.as_ref().unwrap().state(),
+                view.tab().browser.as_ref().unwrap().state(),
                 crate::LoadState::Complete
             )
             .then_some(())
         });
         assert!(
             !view
+                .tab()
                 .browser
                 .as_ref()
                 .unwrap()
@@ -1076,10 +1175,11 @@ mod tests {
         ready(&mut panel);
         assert!(panel.command(panel.scope().unwrap(), Command::Start));
         panel.hide();
-        view.extraction = Some(panel);
+        view.jobs.extraction = Some(panel);
         wait(|| {
             view.changed();
-            view.browser
+            view.tab()
+                .browser
                 .as_ref()
                 .unwrap()
                 .entries()
@@ -1092,14 +1192,15 @@ mod tests {
             b"verified payload"
         );
         assert!(
-            view.extraction
+            view.jobs
+                .extraction
                 .as_mut()
                 .unwrap()
                 .take_refresh_parent()
                 .is_none()
         );
-        assert!(!view.extraction.as_ref().unwrap().visible());
-        let panel = view.extraction.as_mut().unwrap();
+        assert!(!view.jobs.extraction.as_ref().unwrap().visible());
+        let panel = view.jobs.extraction.as_mut().unwrap();
         assert!(panel.command(panel.scope().unwrap(), Command::Acknowledge));
         // Acknowledgement is queued to the retained worker; wait for its
         // admission slot rather than assuming synchronous reclamation.
@@ -1109,22 +1210,23 @@ mod tests {
                 .then_some(())
         });
         ready(panel);
-        view.navigate(other.clone());
+        view.tab_mut().navigate(other.clone());
         wait(|| {
-            view.refresh();
+            view.tab_mut().refresh();
             matches!(
-                view.browser.as_ref().unwrap().state(),
+                view.tab().browser.as_ref().unwrap().state(),
                 crate::LoadState::Complete
             )
             .then_some(())
         });
-        let serial = view.listing_serial;
-        let panel = view.extraction.as_mut().unwrap();
+        let serial = view.tab().listing_serial;
+        let panel = view.jobs.extraction.as_mut().unwrap();
         assert!(panel.command(panel.scope().unwrap(), Command::Start));
         panel.hide();
         wait(|| {
             view.changed();
-            view.extraction
+            view.jobs
+                .extraction
                 .as_ref()
                 .unwrap()
                 .snapshot
@@ -1132,14 +1234,16 @@ mod tests {
                 .is_some_and(|snapshot| snapshot.state == ExtractionJobState::Terminal)
                 .then_some(())
         });
-        assert_eq!(view.browser.as_ref().unwrap().path(), other);
+        assert_eq!(view.tab().browser.as_ref().unwrap().path(), other);
         assert_eq!(
-            view.listing_serial, serial,
+            view.tab().listing_serial,
+            serial,
             "publication elsewhere must not reset the current listing or selection"
         );
-        assert!(view.browser.as_ref().unwrap().entries().is_empty());
+        assert!(view.tab().browser.as_ref().unwrap().entries().is_empty());
         assert!(
-            view.extraction
+            view.jobs
+                .extraction
                 .as_mut()
                 .unwrap()
                 .take_refresh_parent()
@@ -1154,7 +1258,7 @@ mod tests {
     #[test]
     fn synthetic_fixture_and_idle_controller_spawn_no_extraction_worker() {
         let view = super::super::BrowserView::fixture(5);
-        assert!(view.extraction.is_none());
+        assert!(view.jobs.extraction.is_none());
         assert!(!view.mutations_busy());
         let panel = ExtractionUi::new();
         assert!(panel.jobs.is_none());
@@ -1183,10 +1287,11 @@ mod tests {
         assert!(extraction.command(scope, Command::Start));
         extraction.visible = false;
         let mut view = super::super::BrowserView::fixture(0);
-        view.extraction = Some(extraction);
+        view.jobs.extraction = Some(extraction);
         wait(|| {
             view.changed();
-            view.extraction
+            view.jobs
+                .extraction
                 .as_ref()
                 .unwrap()
                 .snapshot
@@ -1215,7 +1320,7 @@ mod tests {
                 .surface("extraction-hidden-status")
                 .is_some()
         );
-        let controller = view.extraction.as_mut().unwrap();
+        let controller = view.jobs.extraction.as_mut().unwrap();
         controller.show();
         let scope = controller.scope().unwrap();
         assert!(controller.command(scope, Command::Acknowledge));
@@ -1602,17 +1707,17 @@ mod tests {
     fn idle_back_invalidates_isolated_frame_and_paints_archive_without_cancelling() {
         let f = Fixture::new();
         let mut view = super::super::BrowserView::fixture(0);
-        view.archive = Some(super::super::archive::ArchivePanel::new(f.zip()));
+        view.tab_mut().archive = Some(super::super::archive::ArchivePanel::new(f.zip()));
         let mut controller = ExtractionUi::new();
         wait(|| {
-            let archive = view.archive.as_mut().unwrap();
+            let archive = view.tab_mut().archive.as_mut().unwrap();
             archive.poll();
             archive
                 .prepare_extraction(&mut controller, ExtractionSelection::All, f.0.join("out"))
                 .then_some(())
         });
         ready(&mut controller);
-        view.extraction = Some(controller);
+        view.jobs.extraction = Some(controller);
         let mut ui = super::super::make_ui().unwrap();
         let step = |view: &mut super::super::BrowserView, ui: &mut Ui, input: Input| {
             let tree = view.build(ui, &input);
@@ -1623,7 +1728,7 @@ mod tests {
         // Both states can remain idle indefinitely without a worker update.
         for terminal_state in [false, true] {
             if terminal_state {
-                let panel = view.extraction.as_mut().unwrap();
+                let panel = view.jobs.extraction.as_mut().unwrap();
                 assert!(panel.command(panel.scope().unwrap(), Command::Cancel));
                 terminal(panel);
                 panel.show();
@@ -1633,7 +1738,7 @@ mod tests {
                 view.changed();
             }
             assert!(!view.changed(), "fixture must be idle before Back");
-            let panel = view.extraction.as_ref().unwrap();
+            let panel = view.jobs.extraction.as_ref().unwrap();
             let job = panel.active;
             let id = panel.id("back");
             let rect = ui.scene().unwrap().surface(&id).unwrap().frame;
@@ -1656,26 +1761,26 @@ mod tests {
             // Consume Back in its isolated event frame, as the host does.
             step(&mut view, &mut ui, Input::default());
             assert!(ui.scene().unwrap().surface("extraction-screen").is_some());
-            assert!(!view.extraction.as_ref().unwrap().visible());
+            assert!(!view.jobs.extraction.as_ref().unwrap().visible());
             assert!(view.changed(), "Back must schedule the replacement frame");
             assert!(
-                !view.geometry_changed,
+                !view.tab().geometry_changed,
                 "Archive early return must consume geometry dirtiness"
             );
             step(&mut view, &mut ui, Input::default());
             assert!(ui.scene().unwrap().surface("extraction-screen").is_none());
             assert!(ui.scene().unwrap().surface("archive-panel").is_some());
-            let panel = view.extraction.as_ref().unwrap();
+            let panel = view.jobs.extraction.as_ref().unwrap();
             assert_eq!(panel.active, job);
             assert!(panel.busy());
             assert_eq!(panel.cancel_requested, terminal_state);
             assert!(!f.0.join("out").exists());
         }
         // Navigation invalidation must also survive the Find early return.
-        view.find = Some(super::super::find::FindPanel::new(f.0.clone()));
-        view.geometry_changed = true;
+        view.tab_mut().find = Some(super::super::find::FindPanel::new(f.0.clone()));
+        view.tab_mut().geometry_changed = true;
         assert!(view.changed());
-        assert!(!view.geometry_changed);
+        assert!(!view.tab().geometry_changed);
     }
 
     #[test]
@@ -1683,17 +1788,17 @@ mod tests {
         let f = Fixture::new();
         let source = f.zip();
         let mut view = super::super::BrowserView::new(f.0.clone());
-        view.archive = Some(super::super::archive::ArchivePanel::new(source));
+        view.tab_mut().archive = Some(super::super::archive::ArchivePanel::new(source));
         let mut controller = ExtractionUi::new();
         wait(|| {
-            let archive = view.archive.as_mut().unwrap();
+            let archive = view.tab_mut().archive.as_mut().unwrap();
             archive.poll();
             archive
                 .prepare_extraction(&mut controller, ExtractionSelection::All, f.0.join("out"))
                 .then_some(())
         });
         ready(&mut controller);
-        view.extraction = Some(controller);
+        view.jobs.extraction = Some(controller);
         let mut ui = super::super::make_ui().unwrap();
         let size = Size::new(320., 240.);
         let step = |view: &mut super::super::BrowserView, ui: &mut Ui, input: Input| {
@@ -1719,12 +1824,12 @@ mod tests {
             step(&mut view, &mut ui, Input::default());
         }
         assert!(
-            view.archive.is_some(),
+            view.tab().archive.is_some(),
             "Escape cascaded into closing the archive"
         );
-        assert!(!view.extraction.as_ref().unwrap().visible());
+        assert!(!view.jobs.extraction.as_ref().unwrap().visible());
         assert!(view.mutations_busy());
-        let id = view.extraction.as_ref().unwrap().id("show");
+        let id = view.jobs.extraction.as_ref().unwrap().id("show");
         let rect = ui.scene().unwrap().surface(&id).unwrap().frame;
         let point = Point::new(
             rect.x + rect.size.width / 2.,
@@ -1744,9 +1849,9 @@ mod tests {
         for _ in 0..3 {
             step(&mut view, &mut ui, Input::default());
         }
-        assert!(view.extraction.as_ref().unwrap().visible());
+        assert!(view.jobs.extraction.as_ref().unwrap().visible());
         assert!(ui.scene().unwrap().surface("extraction-screen").is_some());
         assert!(view.mutations_busy());
-        assert!(!view.extraction.as_ref().unwrap().cancel_requested);
+        assert!(!view.jobs.extraction.as_ref().unwrap().cancel_requested);
     }
 }

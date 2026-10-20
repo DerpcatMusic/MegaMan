@@ -1501,8 +1501,8 @@ mod tests {
         let mut view = crate::BrowserView::fixture(0);
         let mut panel = ArchivePanel::new(source);
         complete(&mut panel);
-        view.archive = Some(panel);
-        view.copy_transfers = Some(transfers);
+        view.tab_mut().archive = Some(panel);
+        view.jobs.copy_transfers = Some(transfers);
         let mut ui = crate::make_ui().unwrap();
         for size in [
             Size::new(1024., 720.),
@@ -1514,7 +1514,7 @@ mod tests {
                 ui.frame(tree, Some(size), Input::default(), 0.016).unwrap();
                 view.after_frame(&mut ui);
             }
-            let panel = view.archive.as_ref().unwrap();
+            let panel = view.tab().archive.as_ref().unwrap();
             let scene = ui.scene().unwrap();
             for id in [
                 "archive-close",
@@ -1522,7 +1522,8 @@ mod tests {
                 "archive-next",
                 "archive-previous",
                 "archive-status",
-                view.copy_transfers
+                view.jobs
+                    .copy_transfers
                     .as_ref()
                     .unwrap()
                     .action_id("show")

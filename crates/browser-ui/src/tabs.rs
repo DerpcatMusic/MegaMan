@@ -1,0 +1,404 @@
+//! Application shell. Tab controls and scoped input routing land separately.
+use super::*;
+use browser_core::workspace::{Activation, Limits, Workspace};
+
+pub struct BrowserView {
+    pub(super) workspace: Workspace<TabView>,
+    pub(super) jobs: AppJobs,
+}
+
+impl BrowserView {
+    fn with_tab(tab: TabView) -> Self {
+        let mut workspace =
+            Workspace::new(Limits::default()).expect("valid default workspace limits");
+        workspace
+            .create(tab, Activation::Foreground)
+            .unwrap_or_else(|_| unreachable!("empty workspace admits first tab"));
+        Self {
+            workspace,
+            jobs: AppJobs::default(),
+        }
+    }
+    pub fn new(path: PathBuf) -> Self {
+        Self::with_tab(TabView::new(path))
+    }
+    pub fn fixture(count: usize) -> Self {
+        Self::with_tab(TabView::fixture(count))
+    }
+    fn active_tab(&self) -> Option<&TabView> {
+        self.workspace
+            .active()
+            .and_then(|id| self.workspace.get(id).ok())
+    }
+    #[cfg(test)]
+    pub(super) fn tab(&self) -> &TabView {
+        self.active_tab().expect("test has a live tab")
+    }
+    #[cfg(test)]
+    pub(super) fn tab_mut(&mut self) -> &mut TabView {
+        let id = self.workspace.active().expect("test has a live tab");
+        self.workspace.get_mut(id).expect("active tab is live")
+    }
+    #[cfg(all(test, target_os = "linux"))]
+    pub(super) fn paste_files(&mut self) {
+        if let Some(id) = self.workspace.active() {
+            self.workspace
+                .get_mut(id)
+                .expect("active tab is live")
+                .paste_files(&mut self.jobs);
+        }
+    }
+    #[cfg(target_os = "linux")]
+    pub fn enable_native_file_clipboard(&mut self) {
+        if self.active_tab().is_some_and(|tab| tab.browser.is_some())
+            && self.jobs.file_clipboard.is_none()
+        {
+            self.jobs.file_clipboard = Some(clipboard::ClipboardUi::new());
+        }
+    }
+    pub fn mutations_busy(&self) -> bool {
+        self.jobs.mutations_busy()
+    }
+    pub fn evidence(&self) -> String {
+        if let Some(panel) = self
+            .jobs
+            .extraction
+            .as_ref()
+            .filter(|panel| panel.visible())
+        {
+            return panel.evidence();
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(panel) = self
+            .jobs
+            .copy_transfers
+            .as_ref()
+            .filter(|panel| panel.visible())
+        {
+            return panel.evidence();
+        }
+        self.active_tab().map_or_else(
+            || "{\"mode\":\"empty-workspace\"}".into(),
+            |tab| tab.evidence(&self.jobs),
+        )
+    }
+    pub(super) fn poll_jobs(&mut self) -> bool {
+        let (mut changed, refresh) = self.jobs.poll();
+        if refresh.iter().all(Option::is_none) {
+            return changed;
+        }
+        // Workspace count is bounded. Destinations are native paths captured by
+        // accepted jobs; refresh all matching tabs, independent of active index.
+        let ids: Vec<_> = self.workspace.tabs().map(|(id, _)| id).collect();
+        for id in ids {
+            let tab = self.workspace.get_mut(id).expect("enumerated live tab");
+            if let Some(browser) = &mut tab.browser
+                && refresh
+                    .iter()
+                    .flatten()
+                    .any(|destination| browser.path() == destination)
+            {
+                browser.navigate(browser.path().to_path_buf());
+                tab.reset_listing();
+                changed = true;
+            }
+        }
+        changed
+    }
+}
+
+impl View for BrowserView {
+    fn build(&mut self, ui: &mut Ui, input: &Input) -> El {
+        self.jobs.raw_extraction_owner = self.jobs.presented_extraction_owner;
+        self.jobs.built_extraction_owner = None;
+        self.poll_jobs();
+        let current_owner = self
+            .jobs
+            .extraction
+            .as_ref()
+            .and_then(ExtractionUi::input_owner);
+        if current_owner != self.jobs.presented_extraction_owner {
+            ui.discard_input_for_view_change();
+        }
+        let empty_input = Input::default();
+        let gated_input =
+            if current_owner.is_some() && current_owner == self.jobs.raw_extraction_owner {
+                input
+            } else {
+                &empty_input
+            };
+        if let Some(tree) = self.jobs.build_extraction(ui, gated_input) {
+            return tree;
+        }
+        if let Some(tree) = self.jobs.build_copy_transfers(ui) {
+            return tree;
+        }
+        if let Some(id) = self.workspace.active() {
+            return self
+                .workspace
+                .get_mut(id)
+                .expect("active tab is live")
+                .build(ui, &mut self.jobs);
+        }
+        let tree = col([label("No folders open")]).grow(1).min_w(0).min_h(0);
+        self.jobs.with_mutation_status(ui, tree)
+    }
+    fn changed(&mut self) -> bool {
+        let mut changed = self.poll_jobs();
+        let ids: Vec<_> = self.workspace.tabs().map(|(id, _)| id).collect();
+        for id in ids {
+            changed |= self
+                .workspace
+                .get_mut(id)
+                .expect("enumerated live tab")
+                .changed();
+        }
+        changed
+    }
+    fn request_resize(&mut self, _: u32, _: u32) -> bool {
+        false
+    }
+    fn after_frame(&mut self, ui: &mut Ui) {
+        // Ui::frame has just delivered the host batch to the newly built tree.
+        // Do not retarget old-owner input into a new extraction controller (or
+        // back into the tab). Persistent jobs and semantic host actions survive.
+        if self.jobs.raw_extraction_owner != self.jobs.built_extraction_owner {
+            ui.discard_input_for_view_change();
+        }
+        self.jobs.presented_extraction_owner = self.jobs.built_extraction_owner;
+        self.jobs.dispatch_clipboard_controls(ui);
+        self.jobs.admit_paste_offer();
+        if let Some(panel) = self
+            .jobs
+            .extraction
+            .as_mut()
+            .filter(|panel| panel.visible())
+        {
+            panel.after_frame(ui);
+            return;
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(panel) = self
+            .jobs
+            .copy_transfers
+            .as_mut()
+            .filter(|panel| panel.visible())
+        {
+            panel.after_frame(ui);
+            return;
+        }
+        if let Some(id) = self.workspace.active() {
+            self.workspace
+                .get_mut(id)
+                .expect("active tab is live")
+                .after_frame(ui);
+        }
+    }
+    fn claims_key(&self, key: &Key, mods: Mods) -> bool {
+        matches!(
+            key,
+            Key::Up
+                | Key::Down
+                | Key::Home
+                | Key::End
+                | Key::PageUp
+                | Key::PageDown
+                | Key::Enter
+                | Key::Space
+                | Key::Escape
+        ) || ((mods.ctrl || mods.cmd)
+            && matches!(
+                key,
+                Key::Char('l' | 'f' | 'F' | 'a' | 'A' | 'c' | 'C' | 'v' | 'V')
+            ))
+            || (mods.alt && matches!(key, Key::Left | Key::Right))
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use browser_core::selection::{Action, Modifiers};
+    use std::{
+        ffi::OsString,
+        fs,
+        os::unix::ffi::OsStringExt,
+        sync::atomic::{AtomicU64, Ordering},
+        thread,
+        time::{Duration, Instant},
+    };
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/tabs-generated")
+                .join(format!(
+                    "{}-{}",
+                    std::process::id(),
+                    NEXT.fetch_add(1, Ordering::Relaxed)
+                ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+    fn until(mut ready: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ready() {
+            assert!(Instant::now() < deadline, "application worker timed out");
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+    fn copy_complete(view: &mut BrowserView) -> bool {
+        view.changed();
+        view.jobs.copy_transfers.as_ref().is_some_and(|copy| {
+            let evidence = copy.evidence();
+            assert!(!evidence.contains("\"state\":\"failed\""), "{evidence}");
+            evidence.contains("\"state\":\"complete\"")
+        })
+    }
+    fn settle_listings(view: &mut BrowserView) {
+        until(|| {
+            view.changed();
+            view.workspace.tabs().all(|(_, tab)| {
+                tab.browser
+                    .as_ref()
+                    .is_none_or(|browser| match browser.state() {
+                        LoadState::Complete => true,
+                        LoadState::Loading => false,
+                        LoadState::Failed(error) => panic!("listing failed: {error}"),
+                    })
+            })
+        });
+    }
+
+    #[test]
+    fn captured_native_paste_survives_origin_close_and_empty_workspace() {
+        let fixture = Fixture::new();
+        let source = fixture.0.join("payload");
+        let destination = fixture.0.join("destination");
+        fs::write(&source, b"app-owned copied payload").unwrap();
+        fs::create_dir(&destination).unwrap();
+        let mut view = BrowserView::fixture(5);
+        view.jobs.file_clipboard = Some(clipboard::ClipboardUi::fixture_offer(
+            vec![source],
+            destination.clone(),
+        ));
+        let origin = view.workspace.active().unwrap();
+        let removed = view.workspace.close_without_history(origin).unwrap();
+        thread::spawn(move || drop(removed)).join().unwrap();
+        assert!(view.workspace.is_empty());
+        assert!(view.mutations_busy(), "captured offer retains admission");
+        view.jobs.admit_paste_offer();
+        until(|| copy_complete(&mut view));
+        assert_eq!(
+            fs::read(destination.join("payload")).unwrap(),
+            b"app-owned copied payload"
+        );
+        assert!(
+            view.mutations_busy(),
+            "terminal remains until acknowledgement"
+        );
+        let mut ui = make_ui().unwrap();
+        for _ in 0..3 {
+            let tree = view.build(&mut ui, &Input::default());
+            ui.frame(tree, Some(Size::new(640., 480.)), Input::default(), 0.016)
+                .unwrap();
+            view.after_frame(&mut ui);
+        }
+        assert!(ui.scene().unwrap().surface("copy-transfer-root").is_some());
+        assert!(view.evidence().contains("\"state\":\"complete\""));
+        assert!(view.jobs.copy_transfers.as_ref().unwrap().busy());
+    }
+
+    #[test]
+    fn committed_copy_refreshes_all_matching_native_tabs_and_preserves_other_tab() {
+        let fixture = Fixture::new();
+        let destination = fixture
+            .0
+            .join(OsString::from_vec(b"destination-\xff".to_vec()));
+        let unrelated = fixture.0.join("unrelated");
+        fs::create_dir(&destination).unwrap();
+        fs::create_dir(&unrelated).unwrap();
+        fs::write(destination.join("needle-old"), b"existing").unwrap();
+        fs::write(unrelated.join("unrelated-file"), b"untouched").unwrap();
+        let source = fixture.0.join("needle-new");
+        fs::write(&source, b"new content").unwrap();
+        let mut view = BrowserView::new(destination.clone());
+        let first = view.workspace.active().unwrap();
+        let second = view
+            .workspace
+            .create(TabView::new(destination.clone()), Activation::Background)
+            .unwrap_or_else(|_| panic!("second tab admission failed"));
+        let other = view
+            .workspace
+            .create(TabView::new(unrelated.clone()), Activation::Background)
+            .unwrap_or_else(|_| panic!("third tab admission failed"));
+        for id in [first, second] {
+            let tab = view.workspace.get_mut(id).unwrap();
+            tab.filter = "needle".into();
+            tab.browser.as_mut().unwrap().set_filter("needle");
+        }
+        settle_listings(&mut view);
+        for id in [first, second, other] {
+            view.workspace.get_mut(id).unwrap().apply_selection(
+                Action::Click {
+                    index: 0,
+                    modifiers: Modifiers::default(),
+                },
+                false,
+            );
+        }
+        let old_other_revision = view
+            .workspace
+            .get(other)
+            .unwrap()
+            .selection
+            .revision()
+            .clone();
+        let old_first_revision = view
+            .workspace
+            .get(first)
+            .unwrap()
+            .selection
+            .revision()
+            .clone();
+        view.jobs.file_clipboard = Some(clipboard::ClipboardUi::fixture_offer(
+            vec![source],
+            destination.clone(),
+        ));
+        view.jobs.admit_paste_offer();
+        until(|| copy_complete(&mut view));
+        settle_listings(&mut view);
+        assert_eq!(view.workspace.active(), Some(first));
+        for id in [first, second] {
+            let tab = view.workspace.get(id).unwrap();
+            assert_eq!(tab.browser.as_ref().unwrap().path(), destination);
+            assert_eq!(tab.filter, "needle");
+            assert_eq!(tab.count(), 2);
+            assert_eq!(tab.selection.count(), 0);
+            assert!(
+                tab.browser
+                    .as_ref()
+                    .unwrap()
+                    .entries()
+                    .iter()
+                    .any(|entry| entry.path == destination.join("needle-new"))
+            );
+        }
+        assert_ne!(
+            view.workspace.get(first).unwrap().selection.revision(),
+            &old_first_revision
+        );
+        let untouched = view.workspace.get(other).unwrap();
+        assert_eq!(untouched.browser.as_ref().unwrap().path(), unrelated);
+        assert_eq!(untouched.selection.revision(), &old_other_revision);
+        assert_eq!(untouched.selection.count(), 1);
+    }
+}
