@@ -13,6 +13,7 @@ use std::sync::OnceLock;
 
 mod fileops;
 mod jobs;
+mod palette;
 mod places;
 use jobs::AppJobs;
 mod tabs;
@@ -505,6 +506,62 @@ impl TabView {
             clipboard.read_for_paste(browser.path().to_path_buf());
         }
     }
+    /// Run a tab-level palette command. Workspace-level commands are handled by the shell.
+    fn run_command(&mut self, ui: &mut Ui, jobs: &mut AppJobs, cmd: palette::Cmd) {
+        use palette::Cmd;
+        let snapshot = || self.browser.as_ref().and_then(Browser::snapshot);
+        match cmd {
+            Cmd::NewFolder => self.open_create(jobs, true),
+            Cmd::NewFile => self.open_create(jobs, false),
+            Cmd::Rename => self.open_rename(jobs),
+            Cmd::Trash => {
+                let snap = snapshot();
+                jobs.fileops.trash_selection(snap, &self.selection);
+            }
+            Cmd::Undo => jobs.fileops.undo_last(),
+            Cmd::Cut => {
+                let snap = snapshot();
+                jobs.fileops.cut_selection(snap.clone(), &self.selection);
+                #[cfg(target_os = "linux")]
+                if let Some(clipboard) = &mut jobs.file_clipboard {
+                    clipboard.copy(snap, &self.selection);
+                }
+            }
+            #[cfg(target_os = "linux")]
+            Cmd::Copy => self.copy_selected_files(jobs),
+            #[cfg(target_os = "linux")]
+            Cmd::Paste => self.paste_files(jobs),
+            #[cfg(not(target_os = "linux"))]
+            Cmd::Copy | Cmd::Paste => {}
+            Cmd::SelectAll => self.apply_selection(SelectAction::SelectAll, false),
+            Cmd::ToggleHidden => self.toggle_hidden(),
+            Cmd::SortName => self.sort_by(SortKey::Name),
+            Cmd::SortType => self.sort_by(SortKey::Kind),
+            Cmd::SortModified => self.sort_by(SortKey::Modified),
+            Cmd::SortSize => self.sort_by(SortKey::Size),
+            Cmd::FindFiles => self.open_find(ui),
+            Cmd::GoHome => {
+                let home = self.home.clone();
+                self.navigate(home);
+            }
+            Cmd::GoUp => self.up(),
+            Cmd::GoBack => self.history(false),
+            Cmd::GoForward => self.history(true),
+            Cmd::Bookmark => {
+                if let Some(path) = self.location() {
+                    jobs.places.toggle_bookmark(&path);
+                }
+            }
+            Cmd::ToggleInspector => self.show_inspector = !self.show_inspector,
+            Cmd::NewTab | Cmd::CloseTab | Cmd::ReopenTab | Cmd::NextTab | Cmd::PrevTab => {}
+        }
+    }
+    fn toggle_hidden(&mut self) {
+        if let Some(b) = self.browser.as_mut() {
+            b.set_show_hidden(!b.show_hidden());
+            self.reset_listing();
+        }
+    }
     fn sort_by(&mut self, key: SortKey) {
         let Some(browser) = self.browser.as_mut() else {
             return;
@@ -735,6 +792,9 @@ impl TabView {
                 && let Some(path) = self.location()
             {
                 jobs.places.toggle_bookmark(&path);
+            }
+            if (press.mods.ctrl || press.mods.cmd) && matches!(press.key, Key::Char('h' | 'H')) {
+                self.toggle_hidden();
             }
             if (press.mods.ctrl || press.mods.cmd) && press.key == Key::Char('l') {
                 ui.focus("path-input");

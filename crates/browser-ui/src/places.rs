@@ -24,6 +24,10 @@ pub(super) struct Places {
 }
 
 fn config_file() -> Option<PathBuf> {
+    // Tests must never read or write the developer's real places.
+    if cfg!(test) {
+        return None;
+    }
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|v| Path::new(v).is_absolute())
         .map(PathBuf::from)
