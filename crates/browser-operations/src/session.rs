@@ -47,6 +47,8 @@ pub struct CopyBatch {
     pub destination_folder: PathBuf,
     pub limits: CopyLimits,
     pub options: CopyOptions,
+    /// Name a colliding root "name (2)" instead of failing on the existing item.
+    pub keep_both: bool,
 }
 impl CopyBatch {
     pub fn new(sources: Vec<PathBuf>, destination_folder: PathBuf) -> Self {
@@ -55,7 +57,12 @@ impl CopyBatch {
             destination_folder,
             limits: CopyLimits::default(),
             options: CopyOptions::default(),
+            keep_both: false,
         }
+    }
+    pub fn keep_both(mut self) -> Self {
+        self.keep_both = true;
+        self
     }
     pub fn with_options(mut self, options: CopyOptions) -> Self {
         self.options = options;
@@ -219,6 +226,7 @@ impl CopySession {
     }
     /// Memory-only admission. Ownership passes to the worker only on success.
     /// Counts/native bytes are bounded; lexical/duplicate checks run on worker.
+    #[allow(clippy::result_large_err)] // the error hands the rejected batch back to the caller
     pub fn submit(&mut self, batch: CopyBatch) -> std::result::Result<JobId, SubmitError> {
         let mut state = self.shared.state.lock().expect("copy state mutex poisoned");
         let rejected = if state.stop {
@@ -415,7 +423,13 @@ fn preflight(batch: CopyBatch, id: JobId) -> (BatchOutcome, CopyLimits, CopyOpti
         let leaf = source.file_name().map(|name| name.to_os_string());
         let destination = leaf.as_ref().map_or_else(
             || batch.destination_folder.clone(),
-            |leaf| batch.destination_folder.join(leaf),
+            |leaf| {
+                if batch.keep_both {
+                    crate::fsops::unique_in(&batch.destination_folder, leaf)
+                } else {
+                    batch.destination_folder.join(leaf)
+                }
+            },
         );
         if result.preflight_error.is_none() {
             if !lexical(&source, false) {

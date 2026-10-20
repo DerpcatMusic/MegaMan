@@ -107,11 +107,13 @@ impl TransfersUi {
             }
         }
         self.queued = Some(
-            CopyBatch::new(sources, destination).with_options(CopyOptions {
-                metadata: MetadataPolicy::Basic,
-                root_publication: RootPublication::FinalizeBasicAfterPublish,
-                ..CopyOptions::default()
-            }),
+            CopyBatch::new(sources, destination)
+                .keep_both()
+                .with_options(CopyOptions {
+                    metadata: MetadataPolicy::Basic,
+                    root_publication: RootPublication::FinalizeBasicAfterPublish,
+                    ..CopyOptions::default()
+                }),
         );
         self.poll();
         true
@@ -337,10 +339,10 @@ impl TransfersUi {
             hairline(),
             results,
             hairline(),
-            row([detail("No overwrites · each item publishes separately · Basic metadata")
+            row([detail("Never overwrites (keeps both) · each item publishes separately · Basic metadata")
                 .grow(1).basis(0).min_w(0)
                 .lines(1)
-                .clip().tip("No overwrites. Each item publishes separately. Basic preserves ordinary rwx bits and planned atime/mtime; ownership, ACLs and extended attributes are not preserved.")])
+                .clip().tip("Never overwrites: a name clash keeps both as \"name (2)\". Each item publishes separately. Basic preserves ordinary rwx bits and planned atime/mtime; ownership, ACLs and extended attributes are not preserved.")])
                 .pad((8, 4))
                 .fill(chrome())
                 .shrink(0),
