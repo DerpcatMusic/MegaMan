@@ -85,11 +85,11 @@ impl FileOps {
             });
             return false;
         }
-        let verb = match prompt.kind {
-            PromptKind::Rename(_) => "Renaming",
-            _ => "Creating",
+        let (label, verb) = match prompt.kind {
+            PromptKind::Rename(_) => ("Renaming", "Renamed"),
+            _ => ("Creating", "Created"),
         };
-        self.spawn(verb, move || {
+        self.spawn(label, move || {
             let (result, dir) = match prompt.kind {
                 PromptKind::Rename(path) => (
                     fsops::rename(&path, &name),

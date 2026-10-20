@@ -467,9 +467,19 @@ impl View for BrowserView {
                         | 'Z'
                         | 'n'
                         | 'N'
+                        | 't'
+                        | 'T'
+                        | 'w'
+                        | 'W'
+                        | 'd'
+                        | 'D'
+                        | 'h'
+                        | 'H'
+                        | 'p'
+                        | 'P'
                 )
             ))
-            || (mods.alt && matches!(key, Key::Left | Key::Right))
+            || (mods.alt && matches!(key, Key::Left | Key::Right | Key::Up))
     }
 }
 
