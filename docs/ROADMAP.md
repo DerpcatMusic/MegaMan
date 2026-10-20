@@ -8,7 +8,7 @@ MegaMan is being built in verified increments. Existing functionality is experim
 - Batch rename (select several, F2: {name}, {ext}, {n}, {n:3}) is all-or-nothing and undoes together. Extend safe operations: cut (Ctrl+X) + paste moves on one filesystem; rename (F2), create (Ctrl+N / Ctrl+Shift+N), trash (Delete) and undo (Ctrl+Z) exist; move, cross-filesystem move, conflict decisions and recovery remain.
 - Text and image previews (bounded, worker-decoded) exist in the inspector. Add thumbnails, richer inspectors and file-opening integrations.
 - Extend archive workflows with password entry, creation, nested browsing, preview/drag staging, more formats and independent encryption interoperability tests.
-- The listed folder refreshes after external changes (inotify, 300 ms settle; selection resets). Add watcher convergence for archives, large-folder sorting/filtering, system-wide indexed finding and explicit incomplete-coverage feedback.
+- The listed folder refreshes after external changes (inotify, 300 ms settle; the focused item stays selected). Add watcher convergence for archives, large-folder sorting/filtering, system-wide indexed finding and explicit incomplete-coverage feedback.
 - Sort columns (Name, Type, Modified, Size) and real sizes/dates exist. Add list/grid/tree views, grouping, disk usage and future column-based navigation.
 - Copy path (Ctrl+Shift+C), open terminal here and GVfs network volumes exist. Command palette (Ctrl+P) and hidden-file toggle (Ctrl+H) exist. Expand settings, shortcuts, command search, persistence, accessibility, IME and multilingual testing.
 - Add network/device/cloud providers with explicit cancellation, capability and offline behavior.
